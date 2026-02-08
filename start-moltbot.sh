@@ -229,6 +229,14 @@ if (process.env.SLACK_BOT_TOKEN && process.env.SLACK_APP_TOKEN) {
 const baseUrl = (process.env.AI_GATEWAY_BASE_URL || process.env.ANTHROPIC_BASE_URL || '').replace(/\/+$/, '');
 const isOpenAI = baseUrl.endsWith('/openai');
 
+const anthropicModels = [
+    { id: 'claude-opus-4-5-20251101', name: 'Claude Opus 4.5', contextWindow: 200000 },
+    { id: 'claude-sonnet-4-5-20250929', name: 'Claude Sonnet 4.5', contextWindow: 200000 },
+    { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5', contextWindow: 200000 },
+    { id: 'claude-3-5-sonnet-latest', name: 'Claude 3.5 Sonnet', contextWindow: 200000 },
+    { id: 'claude-3-opus-latest', name: 'Claude 3 Opus', contextWindow: 200000 },
+];
+
 if (isOpenAI) {
     // Create custom openai provider config with baseUrl override
     // Omit apiKey so moltbot falls back to OPENAI_API_KEY env var
@@ -250,32 +258,36 @@ if (isOpenAI) {
     config.agents.defaults.models['openai/gpt-5'] = { alias: 'GPT-5' };
     config.agents.defaults.models['openai/gpt-4.5-preview'] = { alias: 'GPT-4.5' };
     config.agents.defaults.model.primary = 'openai/gpt-5.2';
-} else if (baseUrl) {
-    console.log('Configuring Anthropic provider with base URL:', baseUrl);
+} else {
+    // Configure Anthropic provider (with or without custom baseUrl)
+    console.log('Configuring Anthropic provider...');
     config.models = config.models || {};
     config.models.providers = config.models.providers || {};
+    
     const providerConfig = {
-        baseUrl: baseUrl,
         api: 'anthropic-messages',
-        models: [
-            { id: 'claude-opus-4-5-20251101', name: 'Claude Opus 4.5', contextWindow: 200000 },
-            { id: 'claude-sonnet-4-5-20250929', name: 'Claude Sonnet 4.5', contextWindow: 200000 },
-            { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5', contextWindow: 200000 },
-        ]
+        models: anthropicModels
     };
-    // Include API key in provider config if set (required when using custom baseUrl)
+    
+    if (baseUrl) {
+        console.log('Using custom base URL:', baseUrl);
+        providerConfig.baseUrl = baseUrl;
+    }
+    
+    // Include API key in provider config if set
     if (process.env.ANTHROPIC_API_KEY) {
         providerConfig.apiKey = process.env.ANTHROPIC_API_KEY;
     }
+    
     config.models.providers.anthropic = providerConfig;
-    // Add models to the allowlist so they appear in /models
+    
+    // Add models to the allowlist
     config.agents.defaults.models = config.agents.defaults.models || {};
-    config.agents.defaults.models['anthropic/claude-opus-4-5-20251101'] = { alias: 'Opus 4.5' };
-    config.agents.defaults.models['anthropic/claude-sonnet-4-5-20250929'] = { alias: 'Sonnet 4.5' };
-    config.agents.defaults.models['anthropic/claude-haiku-4-5-20251001'] = { alias: 'Haiku 4.5' };
-    config.agents.defaults.model.primary = 'anthropic/claude-opus-4-5-20251101';
-} else {
-    // Default to Anthropic without custom base URL (uses built-in pi-ai catalog)
+    anthropicModels.forEach(m => {
+        config.agents.defaults.models[`anthropic/${m.id}`] = { alias: m.name };
+    });
+    
+    // Set primary model
     config.agents.defaults.model.primary = 'anthropic/claude-sonnet-4-5-20250929';
 }
 
