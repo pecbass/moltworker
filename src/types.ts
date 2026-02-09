@@ -10,6 +10,12 @@ export interface MoltbotEnv {
   // AI Gateway configuration (preferred)
   AI_GATEWAY_API_KEY?: string; // API key for the provider configured in AI Gateway
   AI_GATEWAY_BASE_URL?: string; // AI Gateway URL (e.g., https://gateway.ai.cloudflare.com/v1/{account_id}/{gateway_id}/anthropic)
+
+  // Guide-specific variables (mapped to internal vars in env.ts)
+  CLOUDFLARE_AI_GATEWAY_ID?: string;
+  CLOUDFLARE_AI_GATEWAY_API_KEY?: string; // Recommended by guide for both Gemini & Claude
+  CF_AI_GATEWAY_MODEL?: string; // e.g. "google/gemini-3-flash" or "anthropic/claude-opus-4-5"
+
   // Legacy direct provider configuration (fallback)
   ANTHROPIC_API_KEY?: string;
   ANTHROPIC_BASE_URL?: string;

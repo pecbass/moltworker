@@ -10,16 +10,41 @@ export function buildEnvVars(env: MoltbotEnv): Record<string, string> {
   const envVars: Record<string, string> = {};
 
   // Normalize the base URL by removing trailing slashes
-  const normalizedBaseUrl = env.AI_GATEWAY_BASE_URL?.replace(/\/+$/, '');
+  // Normalize the base URL by removing trailing slashes
+  let baseUrl = env.AI_GATEWAY_BASE_URL;
+
+  // Guide compliance: Construct AI Gateway URL from ID and Account ID if not explicitly set
+  if (!baseUrl && env.CLOUDFLARE_AI_GATEWAY_ID && env.CF_ACCOUNT_ID) {
+    // Default to anthropic provider for the gateway URL construction
+    // The actual provider (openai/anthropic) is determined by the URL suffix in Moltbot
+    // But since the guide uses this for both, we need to pick one.
+    // However, start-moltbot.sh controls the actual provider config based on the URL.
+    // Let's assume Anthropic as default if not specified, but check model name.
+
+    let provider = 'anthropic';
+    if (env.CF_AI_GATEWAY_MODEL?.startsWith('google/') || env.CF_AI_GATEWAY_MODEL?.includes('gemini')) {
+      // For Gemini, we might need a different path or just standard OpenAI compatible endpoint
+      // Cloudflare AI Gateway supports OpenAI-compatible endpoints for many providers
+      provider = 'openai';
+    }
+
+    baseUrl = `https://gateway.ai.cloudflare.com/v1/${env.CF_ACCOUNT_ID}/${env.CLOUDFLARE_AI_GATEWAY_ID}/${provider}`;
+  }
+
+  const normalizedBaseUrl = baseUrl?.replace(/\/+$/, '');
   const isOpenAIGateway = normalizedBaseUrl?.endsWith('/openai');
 
   // AI Gateway vars take precedence
   // Map to the appropriate provider env var based on the gateway endpoint
-  if (env.AI_GATEWAY_API_KEY) {
+  // AI Gateway vars take precedence
+  // Map to the appropriate provider env var based on the gateway endpoint
+  const apiKey = env.AI_GATEWAY_API_KEY || env.CLOUDFLARE_AI_GATEWAY_API_KEY;
+
+  if (apiKey) {
     if (isOpenAIGateway) {
-      envVars.OPENAI_API_KEY = env.AI_GATEWAY_API_KEY;
+      envVars.OPENAI_API_KEY = apiKey;
     } else {
-      envVars.ANTHROPIC_API_KEY = env.AI_GATEWAY_API_KEY;
+      envVars.ANTHROPIC_API_KEY = apiKey;
     }
   }
 
@@ -55,7 +80,9 @@ export function buildEnvVars(env: MoltbotEnv): Record<string, string> {
   if (env.SLACK_APP_TOKEN) envVars.SLACK_APP_TOKEN = env.SLACK_APP_TOKEN;
   if (env.CDP_SECRET) envVars.CDP_SECRET = env.CDP_SECRET;
   if (env.WORKER_URL) envVars.WORKER_URL = env.WORKER_URL;
+  if (env.WORKER_URL) envVars.WORKER_URL = env.WORKER_URL;
   if (env.CF_ACCOUNT_ID) envVars.CF_ACCOUNT_ID = env.CF_ACCOUNT_ID;
+  if (env.CF_AI_GATEWAY_MODEL) envVars.CF_AI_GATEWAY_MODEL = env.CF_AI_GATEWAY_MODEL;
 
   return envVars;
 }

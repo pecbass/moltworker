@@ -227,18 +227,83 @@ if (process.env.SLACK_BOT_TOKEN && process.env.SLACK_APP_TOKEN) {
 // Usage: Set AI_GATEWAY_BASE_URL or ANTHROPIC_BASE_URL to your endpoint like:
 //   https://gateway.ai.cloudflare.com/v1/{account_id}/{gateway_id}/anthropic
 //   https://gateway.ai.cloudflare.com/v1/{account_id}/{gateway_id}/openai
+//   https://gateway.ai.cloudflare.com/v1/{account_id}/{gateway_id}/openai
 const baseUrl = (process.env.AI_GATEWAY_BASE_URL || process.env.ANTHROPIC_BASE_URL || '').replace(/\/+$/, '');
-const isOpenAI = baseUrl.endsWith('/openai');
+const isGoogle = baseUrl.endsWith('/google') || baseUrl.includes('gemini') || (process.env.CF_AI_GATEWAY_MODEL && process.env.CF_AI_GATEWAY_MODEL.startsWith('google/'));
+const isOpenAI = baseUrl.endsWith('/openai') || (process.env.CF_AI_GATEWAY_MODEL && process.env.CF_AI_GATEWAY_MODEL.startsWith('openai/'));
 
+// Default models - removed invalid claude-opus-4-5-20251101
 const anthropicModels = [
-    { id: 'claude-opus-4-5-20251101', name: 'Claude Opus 4.5', contextWindow: 200000 },
     { id: 'claude-sonnet-4-5-20250929', name: 'Claude Sonnet 4.5', contextWindow: 200000 },
     { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5', contextWindow: 200000 },
     { id: 'claude-3-5-sonnet-latest', name: 'Claude 3.5 Sonnet', contextWindow: 200000 },
     { id: 'claude-3-opus-latest', name: 'Claude 3 Opus', contextWindow: 200000 },
 ];
 
-if (isOpenAI) {
+const openaiModels = [
+    { id: 'gpt-5.2', name: 'GPT-5.2', contextWindow: 200000 },
+    { id: 'gpt-5', name: 'GPT-5', contextWindow: 200000 },
+    { id: 'gpt-4.5-preview', name: 'GPT-4.5 Preview', contextWindow: 128000 },
+];
+
+const googleModels = [
+    { id: 'gemini-3-flash', name: 'Gemini 3 Flash', contextWindow: 1000000 },
+    { id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro', contextWindow: 2000000 },
+    { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', contextWindow: 1000000 },
+];
+
+if (isGoogle) {
+    // Configure Google provider (Gemini)
+    console.log('Configuring Google provider with base URL:', baseUrl);
+    config.models = config.models || {};
+    config.models.providers = config.models.providers || {};
+
+    // For Cloudflare AI Gateway, we often use the openai-compatible endpoint for Google models
+    // But if we are using direct google-ai-studio, we need specific config.
+    // Assuming AI Gateway usage with OpenAI compatibility layer for simplicity if baseUrl is set
+    
+    // Check if we should use 'google' provider or 'openai' provider with google models
+    // If baseUrl ends with /openai, use openai provider even for google models
+    if (baseUrl.endsWith('/openai')) {
+         config.models.providers.openai = {
+            baseUrl: baseUrl,
+            api: 'openai-responses',
+            models: googleModels
+        };
+        // Add models to allowlist
+        config.agents.defaults.models = config.agents.defaults.models || {};
+        googleModels.forEach(m => {
+            // Map google/xxxx to the ID
+            config.agents.defaults.models[`google/${m.id}`] = { alias: m.name };
+            // Also map openai/google/xxxx just in case
+            config.agents.defaults.models[`openai/google/${m.id}`] = { alias: m.name };
+        });
+    } else {
+        // Native Google provider config (if supported by this Moltbot version) or generic
+        config.models.providers.google = {
+            baseUrl: baseUrl || 'https://generativelanguage.googleapis.com',
+            api: 'google-generative-ai',
+            models: googleModels
+        };
+        if (process.env.OPENAI_API_KEY) { // Mapped from AI_GATEWAY_API_KEY in env.ts for google logic
+             config.models.providers.google.apiKey = process.env.OPENAI_API_KEY;
+        }
+         // Add models to allowlist
+        config.agents.defaults.models = config.agents.defaults.models || {};
+        googleModels.forEach(m => {
+            config.agents.defaults.models[`google/${m.id}`] = { alias: m.name };
+        });
+    }
+
+    // Set primary model from env or default
+    const envModel = process.env.CF_AI_GATEWAY_MODEL;
+    if (envModel) {
+        config.agents.defaults.model.primary = envModel;
+    } else {
+        config.agents.defaults.model.primary = 'google/gemini-3-flash';
+    }
+
+} else if (isOpenAI) {
     // Create custom openai provider config with baseUrl override
     // Omit apiKey so moltbot falls back to OPENAI_API_KEY env var
     console.log('Configuring OpenAI provider with base URL:', baseUrl);
@@ -247,18 +312,22 @@ if (isOpenAI) {
     config.models.providers.openai = {
         baseUrl: baseUrl,
         api: 'openai-responses',
-        models: [
-            { id: 'gpt-5.2', name: 'GPT-5.2', contextWindow: 200000 },
-            { id: 'gpt-5', name: 'GPT-5', contextWindow: 200000 },
-            { id: 'gpt-4.5-preview', name: 'GPT-4.5 Preview', contextWindow: 128000 },
-        ]
+        models: openaiModels
     };
     // Add models to the allowlist so they appear in /models
     config.agents.defaults.models = config.agents.defaults.models || {};
-    config.agents.defaults.models['openai/gpt-5.2'] = { alias: 'GPT-5.2' };
-    config.agents.defaults.models['openai/gpt-5'] = { alias: 'GPT-5' };
-    config.agents.defaults.models['openai/gpt-4.5-preview'] = { alias: 'GPT-4.5' };
-    config.agents.defaults.model.primary = 'openai/gpt-5.2';
+    openaiModels.forEach(m => {
+        config.agents.defaults.models[`openai/${m.id}`] = { alias: m.name };
+    });
+    
+     // Set primary model from env or default
+    const envModel = process.env.CF_AI_GATEWAY_MODEL;
+    if (envModel) {
+        config.agents.defaults.model.primary = envModel;
+    } else {
+        config.agents.defaults.model.primary = 'openai/gpt-5.2';
+    }
+} else {
 } else {
     // Configure Anthropic provider (with or without custom baseUrl)
     console.log('Configuring Anthropic provider...');
@@ -289,7 +358,12 @@ if (isOpenAI) {
     });
     
     // Set primary model
-    config.agents.defaults.model.primary = 'anthropic/claude-sonnet-4-5-20250929';
+    const envModel = process.env.CF_AI_GATEWAY_MODEL;
+    if (envModel) {
+        config.agents.defaults.model.primary = envModel;
+    } else {
+        config.agents.defaults.model.primary = 'anthropic/claude-sonnet-4-5-20250929';
+    }
 }
 
 // Write updated config
@@ -299,37 +373,37 @@ console.log('Config:', JSON.stringify(config, null, 2));
 EOFNODE
 
 # ============================================================
-# DEBUG PROBE MODE
+# START GATEWAY
 # ============================================================
-echo "============================================================"
-echo "DEBUG PROBE MODE ACTIVE"
-echo "Skipping actual clawdbot startup to debug environment."
-echo "============================================================"
+# Note: R2 backup sync is handled by the Worker's cron trigger
+echo "Starting Moltbot Gateway..."
+echo "Gateway will be available on port 18789"
 
-echo "Node Version:"
-node --version
-echo "NPM Version:"
-npm --version
-echo "Clawdbot Version:"
-clawdbot --version || echo "Clawdbot not found or failed"
+# Clean up stale lock files
+rm -f /tmp/clawdbot-gateway.lock 2>/dev/null || true
+rm -f "$CONFIG_DIR/gateway.lock" 2>/dev/null || true
 
-echo "Listing /usr/local/bin:"
-ls -la /usr/local/bin
+BIND_MODE="lan"
+echo "Dev mode: ${CLAWDBOT_DEV_MODE:-false}, Bind mode: $BIND_MODE"
 
-echo "Checking Config File:"
-ls -la "$CONFIG_FILE"
-cat "$CONFIG_FILE"
-
-echo "Checking Env Vars:"
-env | grep -v 'KEY\|TOKEN\|SECRET\|PASS'
-
-echo "Starting fake listener on 18789 to keep container alive..."
-nf_loop() {
+# Function to keep container alive on crash
+keep_alive_on_crash() {
+    local exit_code=$1
+    echo "==============================================="
+    echo "CRASH DETECTED: clawdbot exited with code $exit_code"
+    echo "Starting fake listener on 18789 to keep container alive for logs..."
+    echo "==============================================="
+    
+    # Start netcat in loop to answer health checks
     while true; do
-        echo -e "HTTP/1.1 200 OK\r\nContent-Length: 12\r\n\r\nDebug Probe" | nc -l -p 18789 -q 1
+        echo -e "HTTP/1.1 200 OK\r\nContent-Length: 12\r\n\r\nDebug Crash" | nc -l -p 18789 -q 1
     done
 }
-nf_loop &
 
-echo "Sleeping infinity..."
-sleep infinity
+if [ -n "$CLAWDBOT_GATEWAY_TOKEN" ]; then
+    echo "Starting gateway with token auth..."
+    clawdbot gateway --port 18789 --verbose --allow-unconfigured --bind "$BIND_MODE" --token "$CLAWDBOT_GATEWAY_TOKEN" || keep_alive_on_crash $?
+else
+    echo "Starting gateway with device pairing (no token)..."
+    clawdbot gateway --port 18789 --verbose --allow-unconfigured --bind "$BIND_MODE" || keep_alive_on_crash $?
+fi
