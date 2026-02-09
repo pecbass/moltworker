@@ -265,13 +265,13 @@ if (isOpenAI) {
     config.models.providers = config.models.providers || {};
     
     const providerConfig = {
+        baseUrl: baseUrl || 'https://api.anthropic.com',
         api: 'anthropic-messages',
         models: anthropicModels
     };
     
     if (baseUrl) {
         console.log('Using custom base URL:', baseUrl);
-        providerConfig.baseUrl = baseUrl;
     }
     
     // Include API key in provider config if set
