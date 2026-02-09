@@ -227,7 +227,7 @@ app.all('*', async (c) => {
 
   // Check if gateway is already running
   const existingProcess = await findExistingMoltbotProcess(sandbox);
-  const isGatewayReady = existingProcess !== null && existingProcess.status === 'running';
+  const isGatewayReady = existingProcess !== null && (existingProcess.status === 'running' || existingProcess.status === 'starting');
 
   // For browser requests (non-WebSocket, non-API), show loading page if gateway isn't ready
   const isWebSocketRequest = request.headers.get('Upgrade')?.toLowerCase() === 'websocket';

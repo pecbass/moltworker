@@ -60,10 +60,30 @@ export async function ensureMoltbotGateway(sandbox: Sandbox, env: MoltbotEnv): P
   // Find ALL potentially conflicting processes
   const existingProcesses = await findExistingMoltbotProcesses(sandbox);
 
+  // Check for existing healthy process
+  if (existingProcesses.length === 1) {
+    const proc = existingProcesses[0];
+    console.log(`Found existing process ${proc.id} (status: ${proc.status})`);
+
+    // If it's running or starting, check if it's responsive
+    if (proc.status === 'running' || proc.status === 'starting') {
+      try {
+        console.log(`Checking health of existing process ${proc.id}...`);
+        // Short timeout for health check
+        await proc.waitForPort(MOLTBOT_PORT, { mode: 'tcp', timeout: 2000 });
+        console.log(`Existing process ${proc.id} is healthy, reusing.`);
+        return proc;
+      } catch (e) {
+        console.log(`Existing process ${proc.id} is not responding on port ${MOLTBOT_PORT}:`, e);
+        // Fall through to kill logic
+      }
+    }
+  }
+
   // If there are multiple, or one that is not responsive, kill them all
   // to ensure a clean slate and avoid port conflicts.
   if (existingProcesses.length > 0) {
-    console.log(`Found ${existingProcesses.length} existing Moltbot processes. Cleaning up...`);
+    console.log(`Found ${existingProcesses.length} existing Moltbot processes (or unresponsive). Cleaning up...`);
     for (const proc of existingProcesses) {
       console.log(`Killing process ${proc.id} (status: ${proc.status})...`);
       try {
