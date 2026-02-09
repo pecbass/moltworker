@@ -299,39 +299,37 @@ console.log('Config:', JSON.stringify(config, null, 2));
 EOFNODE
 
 # ============================================================
-# START GATEWAY
+# DEBUG PROBE MODE
 # ============================================================
-# Note: R2 backup sync is handled by the Worker's cron trigger
-echo "Starting Moltbot Gateway..."
-echo "Gateway will be available on port 18789"
+echo "============================================================"
+echo "DEBUG PROBE MODE ACTIVE"
+echo "Skipping actual clawdbot startup to debug environment."
+echo "============================================================"
 
-# Clean up stale lock files
-rm -f /tmp/clawdbot-gateway.lock 2>/dev/null || true
-rm -f "$CONFIG_DIR/gateway.lock" 2>/dev/null || true
+echo "Node Version:"
+node --version
+echo "NPM Version:"
+npm --version
+echo "Clawdbot Version:"
+clawdbot --version || echo "Clawdbot not found or failed"
 
-BIND_MODE="lan"
-echo "Dev mode: ${CLAWDBOT_DEV_MODE:-false}, Bind mode: $BIND_MODE"
+echo "Listing /usr/local/bin:"
+ls -la /usr/local/bin
 
-if [ -n "$CLAWDBOT_GATEWAY_TOKEN" ]; then
-    echo "Starting gateway with token auth..."
-    clawdbot gateway --port 18789 --verbose --allow-unconfigured --bind "$BIND_MODE" --token "$CLAWDBOT_GATEWAY_TOKEN" || {
-        echo "==============================================="
-        echo "CRASH DETECTED: clawdbot exited with code $?"
-        echo "Starting fake listener on 18789 to keep container alive..."
-        echo "==============================================="
-        # Start netcat in background to bind port, then sleep
-        nc -l -k -p 18789 &
-        sleep 3600
-    }
-else
-    echo "Starting gateway with device pairing (no token)..."
-    clawdbot gateway --port 18789 --verbose --allow-unconfigured --bind "$BIND_MODE" || {
-        echo "==============================================="
-        echo "CRASH DETECTED: clawdbot exited with code $?"
-        echo "Starting fake listener on 18789 to keep container alive..."
-        echo "==============================================="
-        # Start netcat in background to bind port, then sleep
-        nc -l -k -p 18789 &
-        sleep 3600
-    }
-fi
+echo "Checking Config File:"
+ls -la "$CONFIG_FILE"
+cat "$CONFIG_FILE"
+
+echo "Checking Env Vars:"
+env | grep -v 'KEY\|TOKEN\|SECRET\|PASS'
+
+echo "Starting fake listener on 18789 to keep container alive..."
+nf_loop() {
+    while true; do
+        echo -e "HTTP/1.1 200 OK\r\nContent-Length: 12\r\n\r\nDebug Probe" | nc -l -p 18789 -q 1
+    done
+}
+nf_loop &
+
+echo "Sleeping infinity..."
+sleep infinity
