@@ -252,6 +252,8 @@ const googleModels = [
     { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', contextWindow: 1000000 },
 ];
 
+let envModel;
+
 if (isGoogle) {
     // Configure Google provider (Gemini)
     console.log('Configuring Google provider with base URL:', baseUrl);
@@ -296,7 +298,7 @@ if (isGoogle) {
     }
 
     // Set primary model from env or default
-    let envModel = process.env.CF_AI_GATEWAY_MODEL;
+    envModel = process.env.CF_AI_GATEWAY_MODEL;
     if (envModel) {
         config.agents.defaults.model.primary = envModel;
     } else {
