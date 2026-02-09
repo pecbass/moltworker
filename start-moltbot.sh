@@ -314,8 +314,20 @@ echo "Dev mode: ${CLAWDBOT_DEV_MODE:-false}, Bind mode: $BIND_MODE"
 
 if [ -n "$CLAWDBOT_GATEWAY_TOKEN" ]; then
     echo "Starting gateway with token auth..."
-    exec clawdbot gateway --port 18789 --verbose --allow-unconfigured --bind "$BIND_MODE" --token "$CLAWDBOT_GATEWAY_TOKEN"
+    clawdbot gateway --port 18789 --verbose --allow-unconfigured --bind "$BIND_MODE" --token "$CLAWDBOT_GATEWAY_TOKEN" || {
+        echo "==============================================="
+        echo "CRASH DETECTED: clawdbot exited with code $?"
+        echo "Sleeping for 1 hour to allow log retrieval..."
+        echo "==============================================="
+        sleep 3600
+    }
 else
     echo "Starting gateway with device pairing (no token)..."
-    exec clawdbot gateway --port 18789 --verbose --allow-unconfigured --bind "$BIND_MODE"
+    clawdbot gateway --port 18789 --verbose --allow-unconfigured --bind "$BIND_MODE" || {
+        echo "==============================================="
+        echo "CRASH DETECTED: clawdbot exited with code $?"
+        echo "Sleeping for 1 hour to allow log retrieval..."
+        echo "==============================================="
+        sleep 3600
+    }
 fi
