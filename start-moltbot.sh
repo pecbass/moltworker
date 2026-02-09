@@ -16,6 +16,20 @@ exec > >(tee -a "$LOG_FILE") 2>&1
 # Force kill any existing clawdbot processes to free the port
 echo "Cleaning up existing clawdbot processes..."
 pkill -f "clawdbot gateway" || true
+
+# Force kill any old nc listener loops (from previous keep_alive_on_crash)
+pkill -f "nc -l -p 18789" || true
+
+# Force kill any OTHER instances of this script to stop them from restarting nc
+MY_PID=$$
+echo "My PID: $MY_PID"
+for pid in $(pgrep -f "start-moltbot.sh"); do
+    if [ "$pid" != "$MY_PID" ] && [ "$pid" != "$PPID" ]; then
+        echo "Killing old script instance $pid"
+        kill -9 "$pid" 2>/dev/null || true
+    fi
+done
+
 # Wait for port to be free
 sleep 2
 
@@ -23,6 +37,7 @@ sleep 2
 if nc -z localhost 18789; then
     echo "Port 18789 is still in use! Forcing kill..."
     pkill -9 -f "clawdbot" || true
+    pkill -9 -f "nc" || true
     sleep 2
 fi
 
