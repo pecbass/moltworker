@@ -7,6 +7,7 @@
 # 4. Starts the gateway
 
 set -e
+set -x
 
 # Check if clawdbot gateway is already running - bail early if so
 # Note: CLI is still named "clawdbot" until upstream renames it
