@@ -326,7 +326,8 @@ if (isGoogle) {
         config.agents.defaults.model.primary = envModel;
     } else {
         config.agents.defaults.model.primary = 'openai/gpt-5.2';
-    } else {
+    }
+} else {
     // Configure Anthropic provider (with or without custom baseUrl)
     console.log('Configuring Anthropic provider...');
     config.models = config.models || {};
