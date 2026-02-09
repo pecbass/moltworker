@@ -296,7 +296,7 @@ if (isGoogle) {
     }
 
     // Set primary model from env or default
-    const envModel = process.env.CF_AI_GATEWAY_MODEL;
+    let envModel = process.env.CF_AI_GATEWAY_MODEL;
     if (envModel) {
         config.agents.defaults.model.primary = envModel;
     } else {
@@ -321,7 +321,7 @@ if (isGoogle) {
     });
     
      // Set primary model from env or default
-    const envModel = process.env.CF_AI_GATEWAY_MODEL;
+    envModel = process.env.CF_AI_GATEWAY_MODEL;
     if (envModel) {
         config.agents.defaults.model.primary = envModel;
     } else {
@@ -357,7 +357,7 @@ if (isGoogle) {
     });
     
     // Set primary model
-    const envModel = process.env.CF_AI_GATEWAY_MODEL;
+    envModel = process.env.CF_AI_GATEWAY_MODEL;
     if (envModel) {
         config.agents.defaults.model.primary = envModel;
     } else {
