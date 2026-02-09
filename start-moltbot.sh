@@ -9,6 +9,10 @@
 set -e
 set -x
 
+# Redirect all output to log file (and keep on stdout for wrangler tail)
+LOG_FILE="/tmp/moltbot.log"
+exec > >(tee -a "$LOG_FILE") 2>&1
+
 # Check if clawdbot gateway is already running - bail early if so
 # Note: CLI is still named "clawdbot" until upstream renames it
 if pgrep -f "clawdbot gateway" > /dev/null 2>&1; then
@@ -395,9 +399,13 @@ keep_alive_on_crash() {
     echo "Starting fake listener on 18789 to keep container alive for logs..."
     echo "==============================================="
     
-    # Start netcat in loop to answer health checks
+    # Start netcat in loop to answer health checks with log content
     while true; do
-        echo -e "HTTP/1.1 200 OK\r\nContent-Length: 12\r\n\r\nDebug Crash" | nc -l -p 18789 -q 1
+        # Prepare log content (escape for HTML/safe output if needed, but plain text is fine for curl/browser view source)
+        echo -e "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nCRASH DETECTED (Exit code: $exit_code)\n\n--- LAST 50 LINES OF LOG ---\n" > /tmp/response.txt
+        tail -n 50 "$LOG_FILE" >> /tmp/response.txt
+        
+        cat /tmp/response.txt | nc -l -p 18789 -q 1
     done
 }
 
