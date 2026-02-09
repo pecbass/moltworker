@@ -13,11 +13,17 @@ set -x
 LOG_FILE="/tmp/moltbot.log"
 exec > >(tee -a "$LOG_FILE") 2>&1
 
-# Check if clawdbot gateway is already running - bail early if so
-# Note: CLI is still named "clawdbot" until upstream renames it
-if pgrep -f "clawdbot gateway" > /dev/null 2>&1; then
-    echo "Moltbot gateway is already running, exiting."
-    exit 0
+# Force kill any existing clawdbot processes to free the port
+echo "Cleaning up existing clawdbot processes..."
+pkill -f "clawdbot gateway" || true
+# Wait for port to be free
+sleep 2
+
+# Check if port 18789 is actually free, retry kill if not
+if nc -z localhost 18789; then
+    echo "Port 18789 is still in use! Forcing kill..."
+    pkill -9 -f "clawdbot" || true
+    sleep 2
 fi
 
 # Paths (clawdbot paths are used internally - upstream hasn't renamed yet)
