@@ -5,34 +5,40 @@ import { buildEnvVars } from './env';
 import { mountR2Storage } from './r2';
 
 /**
- * Find an existing Moltbot gateway process
+ * Find all existing Moltbot gateway processes
  * 
  * @param sandbox - The sandbox instance
- * @returns The process if found and running/starting, null otherwise
+ * @returns Array of found processes
  */
-export async function findExistingMoltbotProcess(sandbox: Sandbox): Promise<Process | null> {
+export async function findExistingMoltbotProcesses(sandbox: Sandbox): Promise<Process[]> {
+  const found: Process[] = [];
   try {
     const processes = await sandbox.listProcesses();
     for (const proc of processes) {
-      // Only match the gateway process, not CLI commands like "clawdbot devices list"
-      // Note: CLI is still named "clawdbot" until upstream renames it
-      const isGatewayProcess = 
+      // Only match the gateway process
+      const isGatewayProcess =
         proc.command.includes('start-moltbot.sh') ||
         proc.command.includes('clawdbot gateway');
-      const isCliCommand = 
+      const isCliCommand =
         proc.command.includes('clawdbot devices') ||
         proc.command.includes('clawdbot --version');
-      
+
       if (isGatewayProcess && !isCliCommand) {
-        if (proc.status === 'starting' || proc.status === 'running') {
-          return proc;
-        }
+        found.push(proc);
       }
     }
   } catch (e) {
     console.log('Could not list processes:', e);
   }
-  return null;
+  return found;
+}
+
+/**
+ * Legacy wrapper for compatibility
+ */
+export async function findExistingMoltbotProcess(sandbox: Sandbox): Promise<Process | null> {
+  const processes = await findExistingMoltbotProcesses(sandbox);
+  return processes.find(p => p.status === 'running' || p.status === 'starting') || null;
 }
 
 /**
@@ -49,31 +55,25 @@ export async function findExistingMoltbotProcess(sandbox: Sandbox): Promise<Proc
  */
 export async function ensureMoltbotGateway(sandbox: Sandbox, env: MoltbotEnv): Promise<Process> {
   // Mount R2 storage for persistent data (non-blocking if not configured)
-  // R2 is used as a backup - the startup script will restore from it on boot
   await mountR2Storage(sandbox, env);
 
-  // Check if Moltbot is already running or starting
-  const existingProcess = await findExistingMoltbotProcess(sandbox);
-  if (existingProcess) {
-    console.log('Found existing Moltbot process:', existingProcess.id, 'status:', existingProcess.status);
+  // Find ALL potentially conflicting processes
+  const existingProcesses = await findExistingMoltbotProcesses(sandbox);
 
-    // Always use full startup timeout - a process can be "running" but not ready yet
-    // (e.g., just started by another concurrent request). Using a shorter timeout
-    // causes race conditions where we kill processes that are still initializing.
-    try {
-      console.log('Waiting for Moltbot gateway on port', MOLTBOT_PORT, 'timeout:', STARTUP_TIMEOUT_MS);
-      await existingProcess.waitForPort(MOLTBOT_PORT, { mode: 'tcp', timeout: STARTUP_TIMEOUT_MS });
-      console.log('Moltbot gateway is reachable');
-      return existingProcess;
-    } catch (e) {
-      // Timeout waiting for port - process is likely dead or stuck, kill and restart
-      console.log('Existing process not reachable after full timeout, killing and restarting...');
+  // If there are multiple, or one that is not responsive, kill them all
+  // to ensure a clean slate and avoid port conflicts.
+  if (existingProcesses.length > 0) {
+    console.log(`Found ${existingProcesses.length} existing Moltbot processes. Cleaning up...`);
+    for (const proc of existingProcesses) {
+      console.log(`Killing process ${proc.id} (status: ${proc.status})...`);
       try {
-        await existingProcess.kill();
-      } catch (killError) {
-        console.log('Failed to kill process:', killError);
+        await proc.kill();
+      } catch (e) {
+        console.log(`Failed to kill process ${proc.id}:`, e);
       }
     }
+    // Give it a moment to release ports
+    await new Promise(resolve => setTimeout(resolve, 2000));
   }
 
   // Start a new Moltbot gateway
@@ -119,6 +119,6 @@ export async function ensureMoltbotGateway(sandbox: Sandbox, env: MoltbotEnv): P
 
   // Verify gateway is actually responding
   console.log('[Gateway] Verifying gateway health...');
-  
+
   return process;
 }
