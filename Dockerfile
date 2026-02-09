@@ -10,7 +10,7 @@ RUN ARCH="$(dpkg --print-architecture)" \
          arm64) NODE_ARCH="arm64" ;; \
          *) echo "Unsupported architecture: ${ARCH}" >&2; exit 1 ;; \
        esac \
-    && apt-get update && apt-get install -y xz-utils ca-certificates rsync \
+    && apt-get update && apt-get install -y xz-utils ca-certificates rsync netcat-openbsd \
     && curl -fsSLk https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz -o /tmp/node.tar.xz \
     && tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 \
     && rm /tmp/node.tar.xz \
@@ -33,7 +33,7 @@ RUN mkdir -p /root/.clawdbot \
     && mkdir -p /root/clawd/skills
 
 # Copy startup script
-# Build cache bust: 2026-02-09-v31-crash-debug
+# Build cache bust: 2026-02-09-v32-crash-debug-nc
 COPY start-moltbot.sh /usr/local/bin/start-moltbot.sh
 RUN chmod +x /usr/local/bin/start-moltbot.sh
 

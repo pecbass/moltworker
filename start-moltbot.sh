@@ -317,8 +317,10 @@ if [ -n "$CLAWDBOT_GATEWAY_TOKEN" ]; then
     clawdbot gateway --port 18789 --verbose --allow-unconfigured --bind "$BIND_MODE" --token "$CLAWDBOT_GATEWAY_TOKEN" || {
         echo "==============================================="
         echo "CRASH DETECTED: clawdbot exited with code $?"
-        echo "Sleeping for 1 hour to allow log retrieval..."
+        echo "Starting fake listener on 18789 to keep container alive..."
         echo "==============================================="
+        # Start netcat in background to bind port, then sleep
+        nc -l -k -p 18789 &
         sleep 3600
     }
 else
@@ -326,8 +328,10 @@ else
     clawdbot gateway --port 18789 --verbose --allow-unconfigured --bind "$BIND_MODE" || {
         echo "==============================================="
         echo "CRASH DETECTED: clawdbot exited with code $?"
-        echo "Sleeping for 1 hour to allow log retrieval..."
+        echo "Starting fake listener on 18789 to keep container alive..."
         echo "==============================================="
+        # Start netcat in background to bind port, then sleep
+        nc -l -k -p 18789 &
         sleep 3600
     }
 fi
