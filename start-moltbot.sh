@@ -430,6 +430,9 @@ keep_alive_on_crash() {
     done
 }
 
+# Set memory limit for Node.js to prevent OOM (Exit code 137) in sandbox
+export NODE_OPTIONS="--max-old-space-size=256"
+
 if [ -n "$CLAWDBOT_GATEWAY_TOKEN" ]; then
     echo "Starting gateway with token auth..."
     clawdbot gateway --port 18789 --verbose --allow-unconfigured --bind "$BIND_MODE" --token "$CLAWDBOT_GATEWAY_TOKEN" || keep_alive_on_crash $?
