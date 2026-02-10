@@ -156,6 +156,21 @@ else
     echo "Using existing config"
 fi
 
+
+# Debug: Check environment variables
+echo "--- Environment Check ---"
+if [ -n "$ANTHROPIC_API_KEY" ]; then
+    echo "ANTHROPIC_API_KEY is SET (starts with: ${ANTHROPIC_API_KEY:0:7}...)"
+else
+    echo "ANTHROPIC_API_KEY is NOT SET"
+fi
+if [ -n "$OPENAI_API_KEY" ]; then
+    echo "OPENAI_API_KEY is SET (starts with: ${OPENAI_API_KEY:0:7}...)"
+fi
+echo "AI_GATEWAY_BASE_URL: $AI_GATEWAY_BASE_URL"
+echo "ANTHROPIC_BASE_URL: $ANTHROPIC_BASE_URL"
+echo "-------------------------"
+
 # ============================================================
 # UPDATE CONFIG FROM ENVIRONMENT VARIABLES
 # ============================================================
