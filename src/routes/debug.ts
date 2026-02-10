@@ -175,12 +175,10 @@ debug.get('/logs', async (c) => {
     } else {
       process = await findExistingMoltbotProcess(sandbox);
       if (!process) {
-        return c.json({
-          status: 'no_process',
-          message: 'No Moltbot process is currently running',
-          stdout: '',
-          stderr: '',
-        });
+        // Even if no process is running, we still want to read the logs!
+        // So we just log it and proceed.
+        // The file reading logic below handles process=null gracefully.
+        console.log('[DEBUG] No running Moltbot process found, but will attempt to read log file.');
       }
     }
 
@@ -200,16 +198,26 @@ debug.get('/logs', async (c) => {
       });
     } catch (readErr) {
       console.error('Failed to read log file:', readErr);
-      // Fallback to process logs if file read fails
-      const logs = await process.getLogs();
-      return c.json({
-        status: 'ok',
-        process_id: process.id,
-        process_status: process.status,
-        stdout: logs.stdout || '',
-        stderr: logs.stderr || '',
-        file_content: false
-      });
+
+      // Fallback to process logs if file read fails and process exists
+      if (process) {
+        const logs = await process.getLogs();
+        return c.json({
+          status: 'ok',
+          process_id: process.id,
+          process_status: process.status,
+          stdout: logs.stdout || '',
+          stderr: logs.stderr || '',
+          file_content: false
+        });
+      } else {
+        // No file read, no process
+        return c.json({
+          status: 'error',
+          message: 'Failed to read log file and no process running',
+          read_error: readErr instanceof Error ? readErr.message : String(readErr)
+        });
+      }
     }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
