@@ -399,14 +399,49 @@ app.all('*', async (c) => {
     });
   }
 
-  console.log('[HTTP] Proxying:', url.pathname + url.search);
-  const httpResponse = await sandbox.containerFetch(request, MOLTBOT_PORT);
+  // COOKIE BRIDGE LOGIC:
+  // 1. If request has ?token=X, we want to set a cookie so subsequent requests (CSS/JS) work.
+  // 2. If request has no token but has cookie, we inject token into upstream URL.
+
+  const tokenParam = url.searchParams.get('token');
+  const cookieHeader = request.headers.get('Cookie');
+  let tokenToUse = tokenParam;
+
+  // If no token in URL, try to find it in cookies
+  if (!tokenToUse && cookieHeader) {
+    const cookies = cookieHeader.split(';').map(c => c.trim());
+    const tokenCookie = cookies.find(c => c.startsWith('moltbot-token='));
+    if (tokenCookie) {
+      tokenToUse = tokenCookie.split('=')[1];
+      console.log('[PROXY] Found token in cookie, injecting into upstream request');
+    }
+  }
+
+  // If we found a token (from URL or Cookie) and there isn't one in the URL already,
+  // we need to inject it for the container request.
+  let requestToContainer = request;
+  if (tokenToUse && !tokenParam) {
+    const newUrl = new URL(request.url);
+    newUrl.searchParams.set('token', tokenToUse);
+    // Create new request with updated URL
+    requestToContainer = new Request(newUrl.toString(), request);
+  }
+
+  console.log('[HTTP] Proxying:', url.pathname + (tokenParam ? ' [token hidden]' : ''));
+  const httpResponse = await sandbox.containerFetch(requestToContainer, MOLTBOT_PORT);
   console.log('[HTTP] Response status:', httpResponse.status);
 
   // Add debug header to verify worker handled the request
   const newHeaders = new Headers(httpResponse.headers);
   newHeaders.set('X-Worker-Debug', 'proxy-to-moltbot');
   newHeaders.set('X-Debug-Path', url.pathname);
+
+  // If the user provided a token in the URL, set it as a cookie for future requests
+  if (tokenParam) {
+    console.log('[PROXY] Setting authentication cookie');
+    // Set a long-lived cookie (7 days)
+    newHeaders.append('Set-Cookie', `moltbot-token=${tokenParam}; Path=/; Max-Age=604800; Secure; SameSite=Lax; HttpOnly`);
+  }
 
   return new Response(httpResponse.body, {
     status: httpResponse.status,
