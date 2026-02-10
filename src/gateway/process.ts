@@ -69,25 +69,35 @@ export async function ensureMoltbotGateway(sandbox: Sandbox, env: MoltbotEnv): P
     if (proc.status === 'running' || proc.status === 'starting') {
       try {
         console.log(`Checking health of existing process ${proc.id}...`);
-        // Increased timeout to 5000ms to prevent flakey restarts
-        await proc.waitForPort(MOLTBOT_PORT, { mode: 'tcp', timeout: 5000 });
+        // First try a quick check (2s) so we don't delay healthy requests too much
+        await proc.waitForPort(MOLTBOT_PORT, { mode: 'tcp', timeout: 2000 });
         console.log(`Existing process ${proc.id} is healthy, reusing.`);
         return proc;
       } catch (e) {
-        console.warn(`Existing process ${proc.id} health check failed (timeout 5000ms):`, e);
-        // We could return the process anyway if it's 'starting', but strictly speaking it's unresponsive.
-        // However, continuously killing it is worse.
-        // Let's try one last check: get logs to see if it crashed.
+        console.log(`Process ${proc.id} not flush on port yet. Checking status...`);
+
+        // Check logs to decide fate
         try {
           const logs = await proc.getLogs();
           if (logs.stderr.includes('CRASH DETECTED')) {
-            console.log(`Process ${proc.id} seems to have crashed, cleaning up.`);
+            console.log(`Process ${proc.id} crashed, cleaning up.`);
+            // Fall through to kill
           } else {
-            console.warn(`Process ${proc.id} is running but port check failed. It might be busy or starting. Killing to be safe (for now).`);
+            console.log(`Process ${proc.id} seems to be booting (no crash detected). Waiting for it...`);
+            // Give it more time (e.g. 60s) to finish booting
+            try {
+              await proc.waitForPort(MOLTBOT_PORT, { mode: 'tcp', timeout: 60000 });
+              console.log(`Process ${proc.id} is now ready!`);
+              return proc;
+            } catch (waitErr) {
+              console.warn(`Process ${proc.id} failed to bind port after extra wait. Killing.`);
+              // Fall through to kill
+            }
           }
-        } catch (_) { /* ignore */ }
-
-        // Fall through to kill logic
+        } catch (logErr) {
+          console.warn(`Failed to read logs for ${proc.id}, assuming unresponsive. Killing.`, logErr);
+          // Fall through to kill
+        }
       }
     }
   }
