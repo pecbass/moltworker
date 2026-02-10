@@ -80,7 +80,7 @@ export async function ensureMoltbotGateway(sandbox: Sandbox, env: MoltbotEnv): P
         // Let's try one last check: get logs to see if it crashed.
         try {
           const logs = await proc.getLogs();
-          if (logs.stderr.includes('CRASH DETECTED') || logs.status === 'exited') {
+          if (logs.stderr.includes('CRASH DETECTED')) {
             console.log(`Process ${proc.id} seems to have crashed, cleaning up.`);
           } else {
             console.warn(`Process ${proc.id} is running but port check failed. It might be busy or starting. Killing to be safe (for now).`);
