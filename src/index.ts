@@ -300,11 +300,6 @@ app.all('*', async (c) => {
       newHeaders.set('Authorization', `Bearer ${tokenToUse}`);
     }
 
-    // Also try Sec-WebSocket-Protocol for WS auth (common pattern)
-    if (!newHeaders.has('Sec-WebSocket-Protocol')) {
-      newHeaders.append('Sec-WebSocket-Protocol', tokenToUse);
-    }
-
     // Create new request with updated URL and headers
     requestToContainer = new Request(newUrl.toString(), {
       method: request.method,
@@ -353,12 +348,49 @@ app.all('*', async (c) => {
     }
 
     // Relay messages from client to container
+    // WE NEED TO INTERCEPT THE FIRST MESSAGE TO INJECT TOKEN
+    let isFirstMessage = true;
+
     serverWs.addEventListener('message', (event) => {
       if (debugLogs) {
         console.log('[WS] Client -> Container:', typeof event.data, typeof event.data === 'string' ? event.data.slice(0, 200) : '(binary)');
       }
+
+      let dataToSend = event.data;
+
+      // Intercept first message to inject token if possible
+      if (isFirstMessage && typeof event.data === 'string' && tokenToUse) {
+        try {
+          const msg = JSON.parse(event.data);
+          // If it looks like a handshake/hello message (or just any JSON), inject token
+          if (typeof msg === 'object' && msg !== null) {
+            console.log('[WS] Injecting token into first message');
+            // detailed logging
+            if (debugLogs) console.log('[WS] Original first message:', event.data);
+
+            // Smart injection:
+            // If message has 'payload' property (GraphQL/Apollo style), inject token there inside payload
+            // Otherwise inject at root (Simple auth)
+            if (msg.payload && typeof msg.payload === 'object') {
+              if (debugLogs) console.log('[WS] Detected payload object, injecting token inside payload');
+              msg.payload.token = tokenToUse;
+            } else {
+              if (debugLogs) console.log('[WS] Injecting token at root');
+              msg.token = tokenToUse;
+            }
+
+            dataToSend = JSON.stringify(msg);
+            if (debugLogs) console.log('[WS] Modified first message:', dataToSend);
+          }
+        } catch (e) {
+          // Not JSON, ignore
+          if (debugLogs) console.log('[WS] First message not JSON, skipping injection');
+        }
+        isFirstMessage = false;
+      }
+
       if (containerWs.readyState === WebSocket.OPEN) {
-        containerWs.send(event.data);
+        containerWs.send(dataToSend);
       } else if (debugLogs) {
         console.log('[WS] Container not open, readyState:', containerWs.readyState);
       }
