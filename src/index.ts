@@ -290,10 +290,14 @@ app.all('*', async (c) => {
   // we need to inject it for the container request.
   let requestToContainer = request;
   if (tokenToUse) {
-    const newUrl = new URL(request.url);
-    if (!tokenParam) {
+    const originalUrl = new URL(request.url);
+    // Use localhost IP to ensure sandbox treats it as an internal request and preserves query params
+    const newUrl = new URL(originalUrl.pathname + originalUrl.search, 'http://127.0.0.1');
+
+    if (!newUrl.searchParams.has('token')) {
       newUrl.searchParams.set('token', tokenToUse);
     }
+
     // Also inject Authorization header as backup
     const newHeaders = new Headers(request.headers);
     if (!newHeaders.has('Authorization')) {
@@ -348,49 +352,12 @@ app.all('*', async (c) => {
     }
 
     // Relay messages from client to container
-    // WE NEED TO INTERCEPT THE FIRST MESSAGE TO INJECT TOKEN
-    let isFirstMessage = true;
-
     serverWs.addEventListener('message', (event) => {
       if (debugLogs) {
         console.log('[WS] Client -> Container:', typeof event.data, typeof event.data === 'string' ? event.data.slice(0, 200) : '(binary)');
       }
-
-      let dataToSend = event.data;
-
-      // Intercept first message to inject token if possible
-      if (isFirstMessage && typeof event.data === 'string' && tokenToUse) {
-        try {
-          const msg = JSON.parse(event.data);
-          // If it looks like a handshake/hello message (or just any JSON), inject token
-          if (typeof msg === 'object' && msg !== null) {
-            console.log('[WS] Injecting token into first message');
-            // detailed logging
-            if (debugLogs) console.log('[WS] Original first message:', event.data);
-
-            // Smart injection:
-            // If message has 'payload' property (GraphQL/Apollo style), inject token there inside payload
-            // Otherwise inject at root (Simple auth)
-            if (msg.payload && typeof msg.payload === 'object') {
-              if (debugLogs) console.log('[WS] Detected payload object, injecting token inside payload');
-              msg.payload.token = tokenToUse;
-            } else {
-              if (debugLogs) console.log('[WS] Injecting token at root');
-              msg.token = tokenToUse;
-            }
-
-            dataToSend = JSON.stringify(msg);
-            if (debugLogs) console.log('[WS] Modified first message:', dataToSend);
-          }
-        } catch (e) {
-          // Not JSON, ignore
-          if (debugLogs) console.log('[WS] First message not JSON, skipping injection');
-        }
-        isFirstMessage = false;
-      }
-
       if (containerWs.readyState === WebSocket.OPEN) {
-        containerWs.send(dataToSend);
+        containerWs.send(event.data);
       } else if (debugLogs) {
         console.log('[WS] Container not open, readyState:', containerWs.readyState);
       }
