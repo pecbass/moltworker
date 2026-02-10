@@ -376,7 +376,7 @@ if (isGoogle) {
     config.models.providers = config.models.providers || {};
     
     const providerConfig = {
-        baseUrl: baseUrl || 'https://api.anthropic.com',
+        baseUrl: 'https://api.anthropic.com', // Force standard URL to rule out config issues
         api: 'anthropic-messages',
         models: anthropicModels
     };
