@@ -69,12 +69,24 @@ export async function ensureMoltbotGateway(sandbox: Sandbox, env: MoltbotEnv): P
     if (proc.status === 'running' || proc.status === 'starting') {
       try {
         console.log(`Checking health of existing process ${proc.id}...`);
-        // Short timeout for health check
-        await proc.waitForPort(MOLTBOT_PORT, { mode: 'tcp', timeout: 2000 });
+        // Increased timeout to 5000ms to prevent flakey restarts
+        await proc.waitForPort(MOLTBOT_PORT, { mode: 'tcp', timeout: 5000 });
         console.log(`Existing process ${proc.id} is healthy, reusing.`);
         return proc;
       } catch (e) {
-        console.log(`Existing process ${proc.id} is not responding on port ${MOLTBOT_PORT}:`, e);
+        console.warn(`Existing process ${proc.id} health check failed (timeout 5000ms):`, e);
+        // We could return the process anyway if it's 'starting', but strictly speaking it's unresponsive.
+        // However, continuously killing it is worse.
+        // Let's try one last check: get logs to see if it crashed.
+        try {
+          const logs = await proc.getLogs();
+          if (logs.stderr.includes('CRASH DETECTED') || logs.status === 'exited') {
+            console.log(`Process ${proc.id} seems to have crashed, cleaning up.`);
+          } else {
+            console.warn(`Process ${proc.id} is running but port check failed. It might be busy or starting. Killing to be safe (for now).`);
+          }
+        } catch (_) { /* ignore */ }
+
         // Fall through to kill logic
       }
     }
