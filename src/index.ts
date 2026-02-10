@@ -371,9 +371,9 @@ app.all('*', async (c) => {
             if (debugLogs) console.log('[WS] Original first message:', event.data);
 
             // Inject token fields
+            // Only inject 'token' property to avoid schema validation errors (invalid request frame)
+            // The previous attempt injected an 'auth' object which might have been rejected.
             msg.token = tokenToUse;
-            if (!msg.auth) msg.auth = {};
-            msg.auth.token = tokenToUse;
 
             dataToSend = JSON.stringify(msg);
             if (debugLogs) console.log('[WS] Modified first message:', dataToSend);
