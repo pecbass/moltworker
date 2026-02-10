@@ -348,12 +348,45 @@ app.all('*', async (c) => {
     }
 
     // Relay messages from client to container
+    // WE NEED TO INTERCEPT THE FIRST MESSAGE TO INJECT TOKEN
+    let isFirstMessage = true;
+
     serverWs.addEventListener('message', (event) => {
       if (debugLogs) {
         console.log('[WS] Client -> Container:', typeof event.data, typeof event.data === 'string' ? event.data.slice(0, 200) : '(binary)');
       }
+
+      let dataToSend = event.data;
+
+      // Intercept first message to inject token if possible
+      if (isFirstMessage && typeof event.data === 'string' && tokenToUse) {
+        try {
+          const msg = JSON.parse(event.data);
+          // If it looks like a handshake/hello message (or just any JSON), inject token
+          // Common patterns: { method: 'connect', ... } or { type: 'hello', ... }
+          // We'll just inject 'token' and 'auth' properties to be safe.
+          if (typeof msg === 'object' && msg !== null) {
+            console.log('[WS] Injecting token into first message');
+            // detailed logging
+            if (debugLogs) console.log('[WS] Original first message:', event.data);
+
+            // Inject token fields
+            msg.token = tokenToUse;
+            if (!msg.auth) msg.auth = {};
+            msg.auth.token = tokenToUse;
+
+            dataToSend = JSON.stringify(msg);
+            if (debugLogs) console.log('[WS] Modified first message:', dataToSend);
+          }
+        } catch (e) {
+          // Not JSON, ignore
+          if (debugLogs) console.log('[WS] First message not JSON, skipping injection');
+        }
+        isFirstMessage = false;
+      }
+
       if (containerWs.readyState === WebSocket.OPEN) {
-        containerWs.send(event.data);
+        containerWs.send(dataToSend);
       } else if (debugLogs) {
         console.log('[WS] Container not open, readyState:', containerWs.readyState);
       }
