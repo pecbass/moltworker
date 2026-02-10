@@ -268,6 +268,35 @@ app.all('*', async (c) => {
     }, 503);
   }
 
+
+  // COOKIE BRIDGE LOGIC:
+  // 1. If request has ?token=X, we want to set a cookie so subsequent requests (CSS/JS) work.
+  // 2. If request has no token but has cookie, we inject token into upstream URL.
+
+  const tokenParam = url.searchParams.get('token');
+  const cookieHeader = request.headers.get('Cookie');
+  let tokenToUse = tokenParam;
+
+  // If no token in URL, try to find it in cookies
+  if (!tokenToUse && cookieHeader) {
+    const cookies = cookieHeader.split(';').map(c => c.trim());
+    const tokenCookie = cookies.find(c => c.startsWith('moltbot-token='));
+    if (tokenCookie) {
+      tokenToUse = tokenCookie.split('=')[1];
+      console.log('[PROXY] Found token in cookie, injecting into upstream request');
+    }
+  }
+
+  // If we found a token (from URL or Cookie) and there isn't one in the URL already,
+  // we need to inject it for the container request.
+  let requestToContainer = request;
+  if (tokenToUse && !tokenParam) {
+    const newUrl = new URL(request.url);
+    newUrl.searchParams.set('token', tokenToUse);
+    // Create new request with updated URL
+    requestToContainer = new Request(newUrl.toString(), request);
+  }
+
   // Proxy to Moltbot with WebSocket message interception
   if (isWebSocketRequest) {
     const debugLogs = c.env.DEBUG_ROUTES === 'true';
@@ -279,7 +308,7 @@ app.all('*', async (c) => {
     }
 
     // Get WebSocket connection to the container
-    const containerResponse = await sandbox.wsConnect(request, MOLTBOT_PORT);
+    const containerResponse = await sandbox.wsConnect(requestToContainer, MOLTBOT_PORT);
     console.log('[WS] wsConnect response status:', containerResponse.status);
 
     // Get the container-side WebSocket
@@ -399,33 +428,6 @@ app.all('*', async (c) => {
     });
   }
 
-  // COOKIE BRIDGE LOGIC:
-  // 1. If request has ?token=X, we want to set a cookie so subsequent requests (CSS/JS) work.
-  // 2. If request has no token but has cookie, we inject token into upstream URL.
-
-  const tokenParam = url.searchParams.get('token');
-  const cookieHeader = request.headers.get('Cookie');
-  let tokenToUse = tokenParam;
-
-  // If no token in URL, try to find it in cookies
-  if (!tokenToUse && cookieHeader) {
-    const cookies = cookieHeader.split(';').map(c => c.trim());
-    const tokenCookie = cookies.find(c => c.startsWith('moltbot-token='));
-    if (tokenCookie) {
-      tokenToUse = tokenCookie.split('=')[1];
-      console.log('[PROXY] Found token in cookie, injecting into upstream request');
-    }
-  }
-
-  // If we found a token (from URL or Cookie) and there isn't one in the URL already,
-  // we need to inject it for the container request.
-  let requestToContainer = request;
-  if (tokenToUse && !tokenParam) {
-    const newUrl = new URL(request.url);
-    newUrl.searchParams.set('token', tokenToUse);
-    // Create new request with updated URL
-    requestToContainer = new Request(newUrl.toString(), request);
-  }
 
   console.log('[HTTP] Proxying:', url.pathname + (tokenParam ? ' [token hidden]' : ''));
   const httpResponse = await sandbox.containerFetch(requestToContainer, MOLTBOT_PORT);
