@@ -294,15 +294,32 @@ app.all('*', async (c) => {
     // Use localhost IP to ensure sandbox treats it as an internal request and preserves query params
     const newUrl = new URL(originalUrl.pathname + originalUrl.search, 'http://127.0.0.1');
 
+    // KITCHEN SINK STRATEGY: Inject token everywhere possible
+    // 1. URL Query Param (Primary target)
     if (!newUrl.searchParams.has('token')) {
       newUrl.searchParams.set('token', tokenToUse);
     }
 
-    // Also inject Authorization header as backup
+    // 2. Authorization Header
     const newHeaders = new Headers(request.headers);
     if (!newHeaders.has('Authorization')) {
       newHeaders.set('Authorization', `Bearer ${tokenToUse}`);
     }
+
+    // 3. Sec-WebSocket-Protocol (Standard for WS)
+    if (!newHeaders.has('Sec-WebSocket-Protocol')) {
+      newHeaders.append('Sec-WebSocket-Protocol', tokenToUse);
+    }
+
+    // 4. Cookie Header (Many frameworks look here)
+    const existingCookie = newHeaders.get('Cookie') || '';
+    if (!existingCookie.includes('moltbot-token=')) {
+      const newCookie = existingCookie ? `${existingCookie}; moltbot-token=${tokenToUse}` : `moltbot-token=${tokenToUse}`;
+      newHeaders.set('Cookie', newCookie);
+    }
+
+    // 5. Custom Header (Just in case)
+    newHeaders.set('x-moltbot-token', tokenToUse);
 
     // Create new request with updated URL and headers
     requestToContainer = new Request(newUrl.toString(), {
