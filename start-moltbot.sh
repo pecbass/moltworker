@@ -20,6 +20,13 @@ pkill -f "clawdbot gateway" || true
 # Force kill any old nc listener loops (from previous keep_alive_on_crash)
 pkill -f "nc -l -p 18789" || true
 
+# AGGRESSIVE CLEANUP: Kill any running node processes (Moltbot/Clawdbot)
+echo "Aggressively killing any existing node processes..."
+killall node 2>/dev/null || true
+pkill -f "node" || true
+pkill -f "clawdbot" || true
+sleep 2
+
 # Force kill any OTHER instances of this script to stop them from restarting nc
 MY_PID=$$
 echo "My PID: $MY_PID"
