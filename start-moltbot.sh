@@ -388,7 +388,7 @@ if (isGoogle) {
     if (envModel) {
         config.agents.defaults.model.primary = envModel;
     } else {
-        config.agents.defaults.model.primary = 'anthropic/claude-4-5-sonnet-20250929';
+        config.agents.defaults.model.primary = 'anthropic/claude-3-5-sonnet-latest';
     }
 }
 
