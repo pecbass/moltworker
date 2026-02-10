@@ -435,8 +435,8 @@ echo "System memory:"
 free -m || true
 
 # Set memory limit for Node.js to prevent OOM (Exit code 137) in sandbox
-# Lowered to 512MB to stay well within container limits (likely 1GB or less)
-export NODE_OPTIONS="--max-old-space-size=512"
+# Adjusted to 1024MB - 512MB caused V8 OOM, 2048MB caused OS OOM.
+export NODE_OPTIONS="--max-old-space-size=1024"
 
 if [ -n "$CLAWDBOT_GATEWAY_TOKEN" ]; then
     echo "Starting gateway with token auth..."
