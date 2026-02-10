@@ -55,11 +55,55 @@ export function createAccessMiddleware(options: AccessMiddlewareOptions) {
       return next();
     }
 
+    // Check if MOLTBOT_GATEWAY_TOKEN is configured and matches
+    const gatewayToken = c.env.MOLTBOT_GATEWAY_TOKEN;
+    if (gatewayToken) {
+      // Check query param
+      const url = new URL(c.req.url);
+      const queryToken = url.searchParams.get('token');
+
+      // Check cookie
+      const cookieHeader = c.req.raw.headers.get('Cookie');
+      const cookieToken = cookieHeader
+        ?.split(';')
+        .map(c => c.trim())
+        .find(c => c.startsWith('moltbot-token='))
+        ?.split('=')[1];
+
+      if (queryToken === gatewayToken || cookieToken === gatewayToken) {
+        c.set('accessUser', { email: 'admin@token', name: 'Token Admin' });
+        return next();
+      }
+    }
+
     const teamDomain = c.env.CF_ACCESS_TEAM_DOMAIN;
     const expectedAud = c.env.CF_ACCESS_AUD;
 
     // Check if CF Access is configured
     if (!teamDomain || !expectedAud) {
+      // If token is configured but not provided/matched, hint about it
+      if (gatewayToken) {
+        if (type === 'json') {
+          return c.json({
+            error: 'Unauthorized',
+            hint: 'Provide ?token=... or configured Cloudflare Access',
+          }, 401);
+        } else {
+          // For HTML, we might want to show a simple login page or just redirect if token missing
+          // For now, let's just fall through to the CF Access error but mention the token
+          // Actually, if CF Access is NOT configured but Token IS, we should just show Unauthorized
+          return c.html(`
+              <html>
+                <body>
+                  <h1>Unauthorized</h1>
+                  <p>Invalid or missing gateway token.</p>
+                  <p>Please use the link with ?token=... provided in your deployment output.</p>
+                </body>
+              </html>
+            `, 401);
+        }
+      }
+
       if (type === 'json') {
         return c.json({
           error: 'Cloudflare Access not configured',
@@ -84,7 +128,7 @@ export function createAccessMiddleware(options: AccessMiddlewareOptions) {
       if (type === 'html' && redirectOnMissing) {
         return c.redirect(`https://${teamDomain}`, 302);
       }
-      
+
       if (type === 'json') {
         return c.json({
           error: 'Unauthorized',
@@ -110,7 +154,7 @@ export function createAccessMiddleware(options: AccessMiddlewareOptions) {
       await next();
     } catch (err) {
       console.error('Access JWT verification failed:', err);
-      
+
       if (type === 'json') {
         return c.json({
           error: 'Unauthorized',
