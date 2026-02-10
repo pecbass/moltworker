@@ -306,10 +306,7 @@ app.all('*', async (c) => {
       newHeaders.set('Authorization', `Bearer ${tokenToUse}`);
     }
 
-    // 3. Sec-WebSocket-Protocol (Standard for WS)
-    if (!newHeaders.has('Sec-WebSocket-Protocol')) {
-      newHeaders.append('Sec-WebSocket-Protocol', tokenToUse);
-    }
+    // 3. (REMOVED) Sec-WebSocket-Protocol - Caused connection drops due to protocol mismatch
 
     // 4. Cookie Header (Many frameworks look here)
     const existingCookie = newHeaders.get('Cookie') || '';
@@ -318,8 +315,7 @@ app.all('*', async (c) => {
       newHeaders.set('Cookie', newCookie);
     }
 
-    // 5. Custom Header (Just in case)
-    newHeaders.set('x-moltbot-token', tokenToUse);
+    // 5. (REMOVED) Custom Header - Unnecessary
 
     // Create new request with updated URL and headers
     requestToContainer = new Request(newUrl.toString(), {
