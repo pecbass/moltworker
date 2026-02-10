@@ -430,8 +430,13 @@ keep_alive_on_crash() {
     done
 }
 
+# Check available memory
+echo "System memory:"
+free -m || true
+
 # Set memory limit for Node.js to prevent OOM (Exit code 137) in sandbox
-export NODE_OPTIONS="--max-old-space-size=256"
+# Increased to 512MB as 256MB was too tight for startup
+export NODE_OPTIONS="--max-old-space-size=512"
 
 if [ -n "$CLAWDBOT_GATEWAY_TOKEN" ]; then
     echo "Starting gateway with token auth..."
