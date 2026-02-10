@@ -73,7 +73,7 @@ debug.get('/processes', async (c) => {
       'completed': 2,
       'failed': 3,
     };
-    
+
     processData.sort((a, b) => {
       const statusA = statusOrder[a.status as string] ?? 99;
       const statusB = statusOrder[b.status as string] ?? 99;
@@ -98,19 +98,19 @@ debug.get('/gateway-api', async (c) => {
   const sandbox = c.get('sandbox');
   const path = c.req.query('path') || '/';
   const MOLTBOT_PORT = 18789;
-  
+
   try {
     const url = `http://localhost:${MOLTBOT_PORT}${path}`;
     const response = await sandbox.containerFetch(new Request(url), MOLTBOT_PORT);
     const contentType = response.headers.get('content-type') || '';
-    
+
     let body: string | object;
     if (contentType.includes('application/json')) {
       body = await response.json();
     } else {
       body = await response.text();
     }
-    
+
     return c.json({
       path,
       status: response.status,
@@ -127,10 +127,10 @@ debug.get('/gateway-api', async (c) => {
 debug.get('/cli', async (c) => {
   const sandbox = c.get('sandbox');
   const cmd = c.req.query('cmd') || 'clawdbot --help';
-  
+
   try {
     const proc = await sandbox.startProcess(cmd);
-    
+
     // Wait longer for command to complete
     let attempts = 0;
     while (attempts < 30) {
@@ -184,14 +184,33 @@ debug.get('/logs', async (c) => {
       }
     }
 
-    const logs = await process.getLogs();
-    return c.json({
-      status: 'ok',
-      process_id: process.id,
-      process_status: process.status,
-      stdout: logs.stdout || '',
-      stderr: logs.stderr || '',
-    });
+    // Read the log file directly as it contains the full history (redirected in start-moltbot.sh)
+    try {
+      const logProc = await sandbox.startProcess('cat /tmp/moltbot.log');
+      await new Promise(resolve => setTimeout(resolve, 500)); // Give it a moment
+      const logOutput = await logProc.getLogs();
+
+      return c.json({
+        status: 'ok',
+        process_id: process?.id || 'unknown',
+        process_status: process?.status || 'unknown',
+        stdout: logOutput.stdout || '',
+        stderr: logOutput.stderr || '',
+        file_content: true
+      });
+    } catch (readErr) {
+      console.error('Failed to read log file:', readErr);
+      // Fallback to process logs if file read fails
+      const logs = await process.getLogs();
+      return c.json({
+        status: 'ok',
+        process_id: process.id,
+        process_status: process.status,
+        stdout: logs.stdout || '',
+        stderr: logs.stderr || '',
+        file_content: false
+      });
+    }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     return c.json({
@@ -208,7 +227,7 @@ debug.get('/ws-test', async (c) => {
   const host = c.req.header('host') || 'localhost';
   const protocol = c.req.header('x-forwarded-proto') || 'https';
   const wsProtocol = protocol === 'https' ? 'wss' : 'ws';
-  
+
   const html = `<!DOCTYPE html>
 <html>
 <head>
@@ -332,7 +351,7 @@ debug.get('/ws-test', async (c) => {
   </script>
 </body>
 </html>`;
-  
+
   return c.html(html);
 });
 
@@ -356,10 +375,10 @@ debug.get('/env', async (c) => {
 // GET /debug/container-config - Read the moltbot config from inside the container
 debug.get('/container-config', async (c) => {
   const sandbox = c.get('sandbox');
-  
+
   try {
     const proc = await sandbox.startProcess('cat /root/.clawdbot/clawdbot.json');
-    
+
     let attempts = 0;
     while (attempts < 10) {
       await new Promise(r => setTimeout(r, 200));
@@ -370,14 +389,14 @@ debug.get('/container-config', async (c) => {
     const logs = await proc.getLogs();
     const stdout = logs.stdout || '';
     const stderr = logs.stderr || '';
-    
+
     let config = null;
     try {
       config = JSON.parse(stdout);
     } catch {
       // Not valid JSON
     }
-    
+
     return c.json({
       status: proc.status,
       exitCode: proc.exitCode,
