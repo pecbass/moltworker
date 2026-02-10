@@ -268,7 +268,6 @@ app.all('*', async (c) => {
     }, 503);
   }
 
-
   // COOKIE BRIDGE LOGIC:
   // 1. If request has ?token=X, we want to set a cookie so subsequent requests (CSS/JS) work.
   // 2. If request has no token but has cookie, we inject token into upstream URL.
@@ -290,11 +289,24 @@ app.all('*', async (c) => {
   // If we found a token (from URL or Cookie) and there isn't one in the URL already,
   // we need to inject it for the container request.
   let requestToContainer = request;
-  if (tokenToUse && !tokenParam) {
+  if (tokenToUse) {
     const newUrl = new URL(request.url);
-    newUrl.searchParams.set('token', tokenToUse);
-    // Create new request with updated URL
-    requestToContainer = new Request(newUrl.toString(), request);
+    if (!tokenParam) {
+      newUrl.searchParams.set('token', tokenToUse);
+    }
+    // Also inject Authorization header as backup
+    const newHeaders = new Headers(request.headers);
+    if (!newHeaders.has('Authorization')) {
+      newHeaders.set('Authorization', `Bearer ${tokenToUse}`);
+    }
+
+    // Create new request with updated URL and headers
+    requestToContainer = new Request(newUrl.toString(), {
+      method: request.method,
+      headers: newHeaders,
+      body: request.body,
+      redirect: request.redirect
+    });
   }
 
   // Proxy to Moltbot with WebSocket message interception
@@ -442,7 +454,7 @@ app.all('*', async (c) => {
   if (tokenParam) {
     console.log('[PROXY] Setting authentication cookie');
     // Set a long-lived cookie (7 days)
-    newHeaders.append('Set-Cookie', `moltbot-token=${tokenParam}; Path=/; Max-Age=604800; Secure; SameSite=Lax; HttpOnly`);
+    newHeaders.append('Set-Cookie', `moltbot-token=${tokenParam}; Path=/; Max-Age=604800; Secure; SameSite=None; HttpOnly`);
   }
 
   return new Response(httpResponse.body, {
