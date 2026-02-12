@@ -285,12 +285,13 @@ const baseUrl = (process.env.AI_GATEWAY_BASE_URL || process.env.ANTHROPIC_BASE_U
 const isGoogle = baseUrl.endsWith('/google') || baseUrl.includes('gemini') || (process.env.CF_AI_GATEWAY_MODEL && process.env.CF_AI_GATEWAY_MODEL.startsWith('google/'));
 const isOpenAI = baseUrl.endsWith('/openai') || (process.env.CF_AI_GATEWAY_MODEL && process.env.CF_AI_GATEWAY_MODEL.startsWith('openai/'));
 
-// Default models - verified against https://docs.anthropic.com/en/docs/about-claude/models
+// Default models - tested via direct API call 2026-02-12
+// claude-3-5-sonnet-20241022 is RETIRED (returns 404)
+// claude-sonnet-4-5-20250929 is VERIFIED WORKING
 const anthropicModels = [
-    { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet', contextWindow: 200000 },
-    { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku', contextWindow: 200000 },
     { id: 'claude-sonnet-4-5-20250929', name: 'Claude Sonnet 4.5', contextWindow: 200000 },
     { id: 'claude-3-7-sonnet-20250219', name: 'Claude 3.7 Sonnet', contextWindow: 200000 },
+    { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku', contextWindow: 200000 },
 ];
 
 const openaiModels = [
@@ -416,8 +417,8 @@ if (isGoogle) {
     if (envModel) {
         config.agents.defaults.model.primary = envModel;
     } else {
-        // Pin to specific version to avoid 'latest' alias issues with binary
-        config.agents.defaults.model.primary = 'anthropic/claude-3-5-sonnet-20241022';
+        // claude-sonnet-4-5-20250929 verified working via direct API test 2026-02-12
+        config.agents.defaults.model.primary = 'anthropic/claude-sonnet-4-5-20250929';
     }
 }
 
