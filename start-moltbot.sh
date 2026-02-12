@@ -285,12 +285,12 @@ const baseUrl = (process.env.AI_GATEWAY_BASE_URL || process.env.ANTHROPIC_BASE_U
 const isGoogle = baseUrl.endsWith('/google') || baseUrl.includes('gemini') || (process.env.CF_AI_GATEWAY_MODEL && process.env.CF_AI_GATEWAY_MODEL.startsWith('google/'));
 const isOpenAI = baseUrl.endsWith('/openai') || (process.env.CF_AI_GATEWAY_MODEL && process.env.CF_AI_GATEWAY_MODEL.startsWith('openai/'));
 
-// Default models - removed invalid claude-opus-4-5-20251101
+// Default models - verified against https://docs.anthropic.com/en/docs/about-claude/models
 const anthropicModels = [
-    { id: 'claude-4-5-sonnet-20250929', name: 'Claude 3.5 Sonnet', contextWindow: 200000 },
-    { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5', contextWindow: 200000 },
-    { id: 'claude-3-5-sonnet-latest', name: 'Claude 3.5 Sonnet', contextWindow: 200000 },
-    { id: 'claude-3-opus-latest', name: 'Claude 3 Opus', contextWindow: 200000 },
+    { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet', contextWindow: 200000 },
+    { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku', contextWindow: 200000 },
+    { id: 'claude-sonnet-4-5-20250929', name: 'Claude Sonnet 4.5', contextWindow: 200000 },
+    { id: 'claude-3-7-sonnet-20250219', name: 'Claude 3.7 Sonnet', contextWindow: 200000 },
 ];
 
 const openaiModels = [
