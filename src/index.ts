@@ -288,23 +288,28 @@ app.all('*', async (c) => {
 
   // If we found a token (from URL or Cookie) and there isn't one in the URL already,
   // we need to inject it for the container request.
+  //
+  // IMPORTANT: For the container-side connection, we use the INTERNAL gateway token
+  // (MOLTBOT_GATEWAY_TOKEN), NOT the browser's token. The browser token is for
+  // Worker-level auth (handled by middleware). The internal token is what the
+  // OpenClaw gateway inside the container expects. OpenClaw 2026.2.9+ strictly
+  // enforces token auth on every WebSocket connection.
+  const internalGatewayToken = c.env.MOLTBOT_GATEWAY_TOKEN;
+  const containerToken = internalGatewayToken || tokenToUse;
+
   let requestToContainer = request;
-  if (tokenToUse) {
+  if (containerToken) {
     const originalUrl = new URL(request.url);
     // Use localhost IP to ensure sandbox treats it as an internal request and preserves query params
     const newUrl = new URL(originalUrl.pathname + originalUrl.search, 'http://127.0.0.1');
 
-    // KITCHEN SINK STRATEGY: Inject token everywhere possible
-    // 1. URL Query Param (Primary target)
-    if (!newUrl.searchParams.has('token')) {
-      newUrl.searchParams.set('token', tokenToUse);
-    }
+    // Inject the INTERNAL gateway token into the container request
+    // 1. URL Query Param (Primary — OpenClaw reads this first)
+    newUrl.searchParams.set('token', containerToken);
 
-    // 2. Authorization Header
+    // 2. Authorization Header (Backup)
     const newHeaders = new Headers(request.headers);
-    if (!newHeaders.has('Authorization')) {
-      newHeaders.set('Authorization', `Bearer ${tokenToUse}`);
-    }
+    newHeaders.set('Authorization', `Bearer ${containerToken}`);
 
     // 3. Rewrite Origin header to gateway's loopback address.
     // OpenClaw 2026.2.9+ rejects WebSocket connections from non-local origins.
@@ -317,7 +322,6 @@ app.all('*', async (c) => {
     // Setting Sec-WebSocket-Protocol to a raw token breaks the WS handshake —
     // the gateway doesn't recognize it as a valid subprotocol and falls back to
     // device-token auth, triggering "Pairing required" (1008) errors.
-    // Token auth via URL query param and Authorization header is sufficient.
 
     // Create new request with updated URL and headers
     requestToContainer = new Request(newUrl.toString(), {
