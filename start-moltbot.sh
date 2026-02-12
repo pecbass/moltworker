@@ -243,6 +243,12 @@ if (process.env.CLAWDBOT_DEV_MODE === 'true') {
     config.gateway.controlUi.allowInsecureAuth = true;
 }
 
+// OpenClaw 2026.2.9+ requires explicit allowedOrigins for the Control UI.
+// Since this runs behind a Cloudflare Worker proxy, we allow all origins here
+// (the Worker itself handles authentication via token).
+config.gateway.controlUi = config.gateway.controlUi || {};
+config.gateway.controlUi.allowedOrigins = ['*'];
+
 // Telegram configuration
 if (process.env.TELEGRAM_BOT_TOKEN) {
     config.channels.telegram = config.channels.telegram || {};

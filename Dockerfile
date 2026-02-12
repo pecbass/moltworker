@@ -33,7 +33,7 @@ RUN mkdir -p /root/.openclaw \
     && mkdir -p /root/clawd/skills
 
 # Copy startup script
-# Build cache bust: 2026-02-12-v78-upgrade-to-openclaw-2026.2.9
+# Build cache bust: 2026-02-12-v79-fix-origin-not-allowed
 
 COPY start-moltbot.sh /usr/local/bin/start-moltbot.sh
 RUN chmod +x /usr/local/bin/start-moltbot.sh
