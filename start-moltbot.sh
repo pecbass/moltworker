@@ -416,7 +416,8 @@ if (isGoogle) {
     if (envModel) {
         config.agents.defaults.model.primary = envModel;
     } else {
-        config.agents.defaults.model.primary = 'anthropic/claude-3-5-sonnet-latest';
+        // Pin to specific version to avoid 'latest' alias issues with binary
+        config.agents.defaults.model.primary = 'anthropic/claude-3-5-sonnet-20241022';
     }
 }
 
