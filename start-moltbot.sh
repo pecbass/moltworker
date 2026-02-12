@@ -25,7 +25,7 @@ echo "Aggressively killing any existing node processes..."
 killall node 2>/dev/null || true
 pkill -f "node" || true
 pkill -f "clawdbot" || true
-sleep 2
+sleep 5 # Increased wait time to ensure ports are released
 
 # Force kill any OTHER instances of this script to stop them from restarting nc
 MY_PID=$$
@@ -51,6 +51,12 @@ fi
 # Paths (clawdbot paths are used internally - upstream hasn't renamed yet)
 CONFIG_DIR="/root/.clawdbot"
 CONFIG_FILE="$CONFIG_DIR/clawdbot.json"
+# Remove stale lock file if it exists
+LOCK_FILE="$CONFIG_DIR/gateway.lock"
+if [ -f "$LOCK_FILE" ]; then
+    echo "Removing stale lock file: $LOCK_FILE"
+    rm -f "$LOCK_FILE"
+fi
 TEMPLATE_DIR="/root/.clawdbot-templates"
 TEMPLATE_FILE="$TEMPLATE_DIR/moltbot.json.template"
 BACKUP_DIR="/data/moltbot"
