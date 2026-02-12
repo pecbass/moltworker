@@ -13,23 +13,31 @@ set -x
 LOG_FILE="/tmp/moltbot.log"
 exec > >(tee -a "$LOG_FILE") 2>&1
 
-# Force kill any existing openclaw processes to free the port
+# Lock file to prevent race conditions from concurrent spawns.
+# If another instance is already running, just exit — don't kill it.
+LOCKFILE="/tmp/moltbot-startup.lock"
+
+if [ -f "$LOCKFILE" ]; then
+    EXISTING_PID=$(cat "$LOCKFILE" 2>/dev/null)
+    if [ -n "$EXISTING_PID" ] && kill -0 "$EXISTING_PID" 2>/dev/null; then
+        echo "Another startup script is already running (PID $EXISTING_PID). Exiting."
+        exit 0
+    fi
+    echo "Stale lock file found (PID $EXISTING_PID not running). Cleaning up."
+fi
+
+# Write our PID to the lock file
+echo $$ > "$LOCKFILE"
+trap 'rm -f "$LOCKFILE"' EXIT
+
+# Now safe to do cleanup — we hold the lock
 echo "Cleaning up existing openclaw processes..."
 pkill -f "openclaw gateway" || true
-
-# Force kill any old nc listener loops (from previous keep_alive_on_crash)
 pkill -f "nc -l -p 18789" || true
-
-# AGGRESSIVE CLEANUP: Kill any running node processes (Moltbot/OpenClaw)
-echo "Aggressively killing any existing node processes..."
-killall node 2>/dev/null || true
-pkill -f "node" || true
 pkill -f "openclaw" || true
-sleep 5 # Increased wait time to ensure ports are released
 
-# Force kill any OTHER instances of this script to stop them from restarting nc
+# Kill any OTHER instances of this script (stale ones that escaped lock)
 MY_PID=$$
-echo "My PID: $MY_PID"
 for pid in $(pgrep -f "start-moltbot.sh"); do
     if [ "$pid" != "$MY_PID" ] && [ "$pid" != "$PPID" ]; then
         echo "Killing old script instance $pid"
@@ -39,14 +47,6 @@ done
 
 # Wait for port to be free
 sleep 2
-
-# Check if port 18789 is actually free, retry kill if not
-if nc -z localhost 18789; then
-    echo "Port 18789 is still in use! Forcing kill..."
-    pkill -9 -f "openclaw" || true
-    pkill -9 -f "nc" || true
-    sleep 2
-fi
 
 # Paths (openclaw uses ~/.openclaw as config dir since the rename)
 CONFIG_DIR="/root/.openclaw"
