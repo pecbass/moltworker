@@ -237,16 +237,14 @@ if (process.env.CLAWDBOT_GATEWAY_TOKEN) {
     config.gateway.auth.token = process.env.CLAWDBOT_GATEWAY_TOKEN;
 }
 
-// Allow insecure auth for dev mode
-if (process.env.CLAWDBOT_DEV_MODE === 'true') {
-    config.gateway.controlUi = config.gateway.controlUi || {};
-    config.gateway.controlUi.allowInsecureAuth = true;
-}
-
-// OpenClaw 2026.2.9+ requires explicit allowedOrigins for the Control UI.
-// Wildcard '*' is NOT supported — must list specific origins.
-// Since this runs behind a Cloudflare Worker proxy, allow the worker's origin.
+// OpenClaw 2026.2.9+ Control UI security settings:
+// 1. allowInsecureAuth = true: REQUIRED because the Cloudflare Worker proxy
+//    connects to the container over plain HTTP (internal network). Without this,
+//    the Control UI rejects token auth as it requires HTTPS or localhost.
+//    TLS is terminated at the Cloudflare edge, so this is safe.
+// 2. allowedOrigins: Explicit list of allowed origins for WebSocket connections.
 config.gateway.controlUi = config.gateway.controlUi || {};
+config.gateway.controlUi.allowInsecureAuth = true;
 config.gateway.controlUi.allowedOrigins = [
     'https://moltbot-sandbox.pecbass.workers.dev',
     'http://localhost:8787',

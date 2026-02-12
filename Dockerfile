@@ -33,7 +33,7 @@ RUN mkdir -p /root/.openclaw \
     && mkdir -p /root/clawd/skills
 
 # Copy startup script
-# Build cache bust: 2026-02-13-v80-explicit-allowed-origins
+# Build cache bust: 2026-02-13-v81-allow-insecure-auth-unconditional
 
 COPY start-moltbot.sh /usr/local/bin/start-moltbot.sh
 RUN chmod +x /usr/local/bin/start-moltbot.sh
