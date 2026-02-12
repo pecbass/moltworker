@@ -306,6 +306,13 @@ app.all('*', async (c) => {
       newHeaders.set('Authorization', `Bearer ${tokenToUse}`);
     }
 
+    // 3. Rewrite Origin header to gateway's loopback address.
+    // OpenClaw 2026.2.9+ rejects WebSocket connections from non-local origins.
+    // Since this Worker IS the trusted auth proxy, we rewrite Origin so the
+    // gateway treats the connection as local, bypassing the origin check.
+    newHeaders.set('Origin', 'http://127.0.0.1:18789');
+    newHeaders.set('Host', '127.0.0.1:18789');
+
     // NOTE: Sec-WebSocket-Protocol and x-moltbot-token were removed intentionally.
     // Setting Sec-WebSocket-Protocol to a raw token breaks the WS handshake —
     // the gateway doesn't recognize it as a valid subprotocol and falls back to
