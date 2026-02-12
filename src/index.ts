@@ -306,16 +306,11 @@ app.all('*', async (c) => {
       newHeaders.set('Authorization', `Bearer ${tokenToUse}`);
     }
 
-    // 3. (REMOVED) Sec-WebSocket-Protocol - Caused connection drops due to protocol mismatch
-
-    // 4. Cookie Header (Many frameworks look here)
-    const existingCookie = newHeaders.get('Cookie') || '';
-    if (!existingCookie.includes('moltbot-token=')) {
-      const newCookie = existingCookie ? `${existingCookie}; moltbot-token=${tokenToUse}` : `moltbot-token=${tokenToUse}`;
-      newHeaders.set('Cookie', newCookie);
-    }
-
-    // 5. (REMOVED) Custom Header - Unnecessary
+    // NOTE: Sec-WebSocket-Protocol and x-moltbot-token were removed intentionally.
+    // Setting Sec-WebSocket-Protocol to a raw token breaks the WS handshake —
+    // the gateway doesn't recognize it as a valid subprotocol and falls back to
+    // device-token auth, triggering "Pairing required" (1008) errors.
+    // Token auth via URL query param and Authorization header is sufficient.
 
     // Create new request with updated URL and headers
     requestToContainer = new Request(newUrl.toString(), {
