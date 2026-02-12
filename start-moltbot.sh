@@ -13,18 +13,18 @@ set -x
 LOG_FILE="/tmp/moltbot.log"
 exec > >(tee -a "$LOG_FILE") 2>&1
 
-# Force kill any existing clawdbot processes to free the port
-echo "Cleaning up existing clawdbot processes..."
-pkill -f "clawdbot gateway" || true
+# Force kill any existing openclaw processes to free the port
+echo "Cleaning up existing openclaw processes..."
+pkill -f "openclaw gateway" || true
 
 # Force kill any old nc listener loops (from previous keep_alive_on_crash)
 pkill -f "nc -l -p 18789" || true
 
-# AGGRESSIVE CLEANUP: Kill any running node processes (Moltbot/Clawdbot)
+# AGGRESSIVE CLEANUP: Kill any running node processes (Moltbot/OpenClaw)
 echo "Aggressively killing any existing node processes..."
 killall node 2>/dev/null || true
 pkill -f "node" || true
-pkill -f "clawdbot" || true
+pkill -f "openclaw" || true
 sleep 5 # Increased wait time to ensure ports are released
 
 # Force kill any OTHER instances of this script to stop them from restarting nc
@@ -43,21 +43,21 @@ sleep 2
 # Check if port 18789 is actually free, retry kill if not
 if nc -z localhost 18789; then
     echo "Port 18789 is still in use! Forcing kill..."
-    pkill -9 -f "clawdbot" || true
+    pkill -9 -f "openclaw" || true
     pkill -9 -f "nc" || true
     sleep 2
 fi
 
-# Paths (clawdbot paths are used internally - upstream hasn't renamed yet)
-CONFIG_DIR="/root/.clawdbot"
-CONFIG_FILE="$CONFIG_DIR/clawdbot.json"
+# Paths (openclaw uses ~/.openclaw as config dir since the rename)
+CONFIG_DIR="/root/.openclaw"
+CONFIG_FILE="$CONFIG_DIR/openclaw.json"
 # Remove stale lock file if it exists
 LOCK_FILE="$CONFIG_DIR/gateway.lock"
 if [ -f "$LOCK_FILE" ]; then
     echo "Removing stale lock file: $LOCK_FILE"
     rm -f "$LOCK_FILE"
 fi
-TEMPLATE_DIR="/root/.clawdbot-templates"
+TEMPLATE_DIR="/root/.openclaw-templates"
 TEMPLATE_FILE="$TEMPLATE_DIR/moltbot.json.template"
 BACKUP_DIR="/data/moltbot"
 
@@ -70,9 +70,9 @@ mkdir -p "$CONFIG_DIR"
 # ============================================================
 # RESTORE FROM R2 BACKUP
 # ============================================================
-# Check if R2 backup exists by looking for clawdbot.json
+# Check if R2 backup exists by looking for openclaw.json (or legacy clawdbot.json)
 # The BACKUP_DIR may exist but be empty if R2 was just mounted
-# Note: backup structure is $BACKUP_DIR/clawdbot/ and $BACKUP_DIR/skills/
+# Note: backup structure is $BACKUP_DIR/openclaw/ and $BACKUP_DIR/skills/
 
 # Helper function to check if R2 backup is newer than local
 should_restore_from_r2() {
@@ -111,21 +111,28 @@ should_restore_from_r2() {
     fi
 }
 
-if [ -f "$BACKUP_DIR/clawdbot/clawdbot.json" ]; then
+if [ -f "$BACKUP_DIR/openclaw/openclaw.json" ]; then
     if should_restore_from_r2; then
-        echo "Restoring from R2 backup at $BACKUP_DIR/clawdbot..."
-        cp -a "$BACKUP_DIR/clawdbot/." "$CONFIG_DIR/"
-        # Copy the sync timestamp to local so we know what version we have
+        echo "Restoring from R2 backup at $BACKUP_DIR/openclaw..."
+        cp -a "$BACKUP_DIR/openclaw/." "$CONFIG_DIR/"
         cp -f "$BACKUP_DIR/.last-sync" "$CONFIG_DIR/.last-sync" 2>/dev/null || true
         echo "Restored config from R2 backup"
+    fi
+elif [ -f "$BACKUP_DIR/clawdbot/clawdbot.json" ]; then
+    # Legacy backup format (pre-rename: clawdbot)
+    if should_restore_from_r2; then
+        echo "Restoring from legacy R2 backup at $BACKUP_DIR/clawdbot..."
+        cp -a "$BACKUP_DIR/clawdbot/." "$CONFIG_DIR/"
+        cp -f "$BACKUP_DIR/.last-sync" "$CONFIG_DIR/.last-sync" 2>/dev/null || true
+        echo "Restored config from legacy R2 backup (clawdbot format)"
     fi
 elif [ -f "$BACKUP_DIR/clawdbot.json" ]; then
     # Legacy backup format (flat structure)
     if should_restore_from_r2; then
-        echo "Restoring from legacy R2 backup at $BACKUP_DIR..."
+        echo "Restoring from legacy flat R2 backup at $BACKUP_DIR..."
         cp -a "$BACKUP_DIR/." "$CONFIG_DIR/"
         cp -f "$BACKUP_DIR/.last-sync" "$CONFIG_DIR/.last-sync" 2>/dev/null || true
-        echo "Restored config from legacy R2 backup"
+        echo "Restored config from legacy flat R2 backup"
     fi
 elif [ -d "$BACKUP_DIR" ]; then
     echo "R2 mounted at $BACKUP_DIR but no backup data found yet"
@@ -190,7 +197,7 @@ echo "-------------------------"
 node << 'EOFNODE'
 const fs = require('fs');
 
-const configPath = '/root/.clawdbot/clawdbot.json';
+const configPath = '/root/.openclaw/openclaw.json';
 console.log('Updating config at:', configPath);
 let config = {};
 
@@ -436,7 +443,7 @@ echo "Starting Moltbot Gateway..."
 echo "Gateway will be available on port 18789"
 
 # Clean up stale lock files
-rm -f /tmp/clawdbot-gateway.lock 2>/dev/null || true
+rm -f /tmp/openclaw-gateway.lock 2>/dev/null || true
 rm -f "$CONFIG_DIR/gateway.lock" 2>/dev/null || true
 
 BIND_MODE="lan"
@@ -446,7 +453,7 @@ echo "Dev mode: ${CLAWDBOT_DEV_MODE:-false}, Bind mode: $BIND_MODE"
 keep_alive_on_crash() {
     local exit_code=$1
     echo "==============================================="
-    echo "CRASH DETECTED: clawdbot exited with code $exit_code"
+    echo "CRASH DETECTED: openclaw exited with code $exit_code"
     echo "Starting fake listener on 18789 to keep container alive for logs..."
     echo "==============================================="
     
@@ -470,8 +477,8 @@ export NODE_OPTIONS="--max-old-space-size=1024"
 
 if [ -n "$CLAWDBOT_GATEWAY_TOKEN" ]; then
     echo "Starting gateway with token auth..."
-    clawdbot gateway --port 18789 --verbose --allow-unconfigured --bind "$BIND_MODE" --token "$CLAWDBOT_GATEWAY_TOKEN" || keep_alive_on_crash $?
+    openclaw gateway --port 18789 --verbose --allow-unconfigured --bind "$BIND_MODE" --token "$CLAWDBOT_GATEWAY_TOKEN" || keep_alive_on_crash $?
 else
     echo "Starting gateway with device pairing (no token)..."
-    clawdbot gateway --port 18789 --verbose --allow-unconfigured --bind "$BIND_MODE" || keep_alive_on_crash $?
+    openclaw gateway --port 18789 --verbose --allow-unconfigured --bind "$BIND_MODE" || keep_alive_on_crash $?
 fi

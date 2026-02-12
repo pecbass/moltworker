@@ -18,10 +18,10 @@ export async function findExistingMoltbotProcesses(sandbox: Sandbox): Promise<Pr
       // Only match the gateway process
       const isGatewayProcess =
         proc.command.includes('start-moltbot.sh') ||
-        proc.command.includes('clawdbot gateway');
+        proc.command.includes('openclaw gateway');
       const isCliCommand =
-        proc.command.includes('clawdbot devices') ||
-        proc.command.includes('clawdbot --version');
+        proc.command.includes('openclaw devices') ||
+        proc.command.includes('openclaw --version');
 
       if (isGatewayProcess && !isCliCommand) {
         found.push(proc);
