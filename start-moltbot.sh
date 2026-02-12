@@ -244,10 +244,14 @@ if (process.env.CLAWDBOT_DEV_MODE === 'true') {
 }
 
 // OpenClaw 2026.2.9+ requires explicit allowedOrigins for the Control UI.
-// Since this runs behind a Cloudflare Worker proxy, we allow all origins here
-// (the Worker itself handles authentication via token).
+// Wildcard '*' is NOT supported — must list specific origins.
+// Since this runs behind a Cloudflare Worker proxy, allow the worker's origin.
 config.gateway.controlUi = config.gateway.controlUi || {};
-config.gateway.controlUi.allowedOrigins = ['*'];
+config.gateway.controlUi.allowedOrigins = [
+    'https://moltbot-sandbox.pecbass.workers.dev',
+    'http://localhost:8787',
+    'http://127.0.0.1:8787'
+];
 
 // Telegram configuration
 if (process.env.TELEGRAM_BOT_TOKEN) {
