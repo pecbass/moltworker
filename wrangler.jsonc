@@ -3,7 +3,9 @@
   "name": "moltbot-sandbox",
   "main": "src/index.ts",
   "compatibility_date": "2025-05-06",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
   "observability": {
     "enabled": true,
   },
@@ -19,12 +21,16 @@
   "rules": [
     {
       "type": "Text",
-      "globs": ["**/*.html"],
+      "globs": [
+        "**/*.html"
+      ],
       "fallthrough": false,
     },
     {
       "type": "Data",
-      "globs": ["**/*.png"],
+      "globs": [
+        "**/*.png"
+      ],
       "fallthrough": false,
     },
   ],
@@ -37,7 +43,7 @@
     {
       "class_name": "Sandbox",
       "image": "./Dockerfile",
-      "instance_type": "standard-1",
+      "instance_type": "standard-4",
       "max_instances": 1,
     },
   ],
@@ -51,7 +57,9 @@
   },
   "migrations": [
     {
-      "new_sqlite_classes": ["Sandbox"],
+      "new_sqlite_classes": [
+        "Sandbox"
+      ],
       "tag": "v1",
     },
   ],
@@ -62,10 +70,21 @@
       "bucket_name": "moltbot-data",
     },
   ],
-
+  // Cron trigger for R2 backup (hourly)
+  "triggers": {
+    "crons": [
+      "0 * * * *"
+    ],
+  },
   // Browser Rendering binding for CDP shim
   "browser": {
     "binding": "BROWSER",
+  },
+  // MOLTBOT_GATEWAY_TOKEN is set here in vars (not as a secret)
+  // due to a wrangler secret binding bug workaround.
+  // Replace <YOUR_TOKEN> with your actual token.
+  "vars": {
+    "MOLTBOT_GATEWAY_TOKEN": "<YOUR_TOKEN>"
   },
   // Note: CF_ACCOUNT_ID should be set via `wrangler secret put CF_ACCOUNT_ID`
   // Secrets to configure via `wrangler secret put`:

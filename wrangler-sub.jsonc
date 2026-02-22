@@ -1,0 +1,90 @@
+{
+    "$schema": "node_modules/wrangler/config-schema.json",
+    "name": "moltbot-sandbox-sub",
+    "main": "src/index.ts",
+    "compatibility_date": "2025-05-06",
+    "compatibility_flags": [
+        "nodejs_compat"
+    ],
+    "observability": {
+        "enabled": true,
+    },
+    // Static assets for admin UI (built by vite)
+    "assets": {
+        "directory": "./dist/client",
+        "not_found_handling": "single-page-application",
+        "html_handling": "auto-trailing-slash",
+        "binding": "ASSETS",
+        "run_worker_first": true,
+    },
+    // Allow importing HTML files as text modules and PNG files as binary
+    "rules": [
+        {
+            "type": "Text",
+            "globs": [
+                "**/*.html"
+            ],
+            "fallthrough": false,
+        },
+        {
+            "type": "Data",
+            "globs": [
+                "**/*.png"
+            ],
+            "fallthrough": false,
+        },
+    ],
+    // Build command for vite
+    "build": {
+        "command": "npm run build",
+    },
+    // Container configuration for the sandbox
+    "containers": [
+        {
+            "class_name": "Sandbox",
+            "image": "./Dockerfile",
+            "instance_type": "standard-4",
+            "max_instances": 1,
+        },
+    ],
+    "durable_objects": {
+        "bindings": [
+            {
+                "class_name": "Sandbox",
+                "name": "Sandbox",
+            },
+        ],
+    },
+    "migrations": [
+        {
+            "new_sqlite_classes": [
+                "Sandbox"
+            ],
+            "tag": "v1",
+        },
+    ],
+    // R2 bucket for persistent storage (sub environment uses separate bucket)
+    "r2_buckets": [
+        {
+            "binding": "MOLTBOT_BUCKET",
+            "bucket_name": "moltbot-data-sub",
+        },
+    ],
+    // NOTE: Cron is intentionally DISABLED for sub environment
+    // to prevent DO interference during broadcasts/testing.
+    // "triggers": { "crons": ["0 * * * *"] },
+    // Browser Rendering binding for CDP shim
+    "browser": {
+        "binding": "BROWSER",
+    },
+    // Sub environment vars
+    // - DEV_MODE: true → CF Access authentication is skipped (Gateway Token auth still active)
+    // - DEBUG_ROUTES: false → prevent exposure of debug endpoints
+    // - SANDBOX_SLEEP_AFTER: 1h → auto-stop after idle (saves cost)
+    "vars": {
+        "MOLTBOT_GATEWAY_TOKEN": "<YOUR_SUB_TOKEN>",
+        "DEV_MODE": "true",
+        "DEBUG_ROUTES": "false",
+        "SANDBOX_SLEEP_AFTER": "1h"
+    },
+}
