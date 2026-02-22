@@ -1,8 +1,12 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../types';
 import { createAccessMiddleware } from '../auth';
-import { ensureMoltbotGateway, findExistingMoltbotProcess, mountR2Storage, syncToR2, waitForProcess, buildEnvVars } from '../gateway';
-import { R2_MOUNT_PATH } from '../config';
+import {
+  ensureMoltbotGateway,
+  findExistingMoltbotProcess,
+  syncToR2,
+  waitForProcess,
+} from '../gateway';
 
 // CLI commands can take 10-15 seconds to complete due to WebSocket connection overhead
 const CLI_TIMEOUT_MS = 20000;
@@ -10,7 +14,7 @@ const CLI_TIMEOUT_MS = 20000;
 /**
  * API routes
  * - /api/admin/* - Protected admin API routes (Cloudflare Access required)
- * 
+ *
  * Note: /api/status is now handled by publicRoutes (no auth required)
  */
 const api = new Hono<AppEnv>();
@@ -31,12 +35,13 @@ adminApi.get('/devices', async (c) => {
     // Ensure moltbot is running first
     await ensureMoltbotGateway(sandbox, c.env);
 
-    // Run moltbot CLI to list devices
-    // Must specify --url to connect to the gateway running in the same container
-    const envVars = buildEnvVars(c.env);
-    const proc = await sandbox.startProcess('openclaw devices list --json --url ws://localhost:18789', {
-      env: Object.keys(envVars).length > 0 ? envVars : undefined,
-    });
+    // Run OpenClaw CLI to list devices
+    // Must specify --url and --token (OpenClaw v2026.2.3 requires explicit credentials with --url)
+    const token = c.env.MOLTBOT_GATEWAY_TOKEN;
+    const tokenArg = token ? ` --token ${token}` : '';
+    const proc = await sandbox.startProcess(
+      `openclaw devices list --json --url ws://localhost:18789${tokenArg}`,
+    );
     await waitForProcess(proc, CLI_TIMEOUT_MS);
 
     const logs = await proc.getLogs();
@@ -87,11 +92,12 @@ adminApi.post('/devices/:requestId/approve', async (c) => {
     // Ensure moltbot is running first
     await ensureMoltbotGateway(sandbox, c.env);
 
-    // Run moltbot CLI to approve the device
-    const envVars = buildEnvVars(c.env);
-    const proc = await sandbox.startProcess(`openclaw devices approve ${requestId} --url ws://localhost:18789`, {
-      env: Object.keys(envVars).length > 0 ? envVars : undefined,
-    });
+    // Run OpenClaw CLI to approve the device
+    const token = c.env.MOLTBOT_GATEWAY_TOKEN;
+    const tokenArg = token ? ` --token ${token}` : '';
+    const proc = await sandbox.startProcess(
+      `openclaw devices approve ${requestId} --url ws://localhost:18789${tokenArg}`,
+    );
     await waitForProcess(proc, CLI_TIMEOUT_MS);
 
     const logs = await proc.getLogs();
@@ -123,7 +129,11 @@ adminApi.post('/devices/approve-all', async (c) => {
     await ensureMoltbotGateway(sandbox, c.env);
 
     // First, get the list of pending devices
-    const listProc = await sandbox.startProcess('openclaw devices list --json --url ws://localhost:18789');
+    const token = c.env.MOLTBOT_GATEWAY_TOKEN;
+    const tokenArg = token ? ` --token ${token}` : '';
+    const listProc = await sandbox.startProcess(
+      `openclaw devices list --json --url ws://localhost:18789${tokenArg}`,
+    );
     await waitForProcess(listProc, CLI_TIMEOUT_MS);
 
     const listLogs = await listProc.getLogs();
@@ -150,14 +160,17 @@ adminApi.post('/devices/approve-all', async (c) => {
 
     for (const device of pending) {
       try {
-        const envVars = buildEnvVars(c.env);
-        const approveProc = await sandbox.startProcess(`openclaw devices approve ${device.requestId} --url ws://localhost:18789`, {
-          env: Object.keys(envVars).length > 0 ? envVars : undefined,
-        });
+        // eslint-disable-next-line no-await-in-loop -- sequential device approval required
+        const approveProc = await sandbox.startProcess(
+          `openclaw devices approve ${device.requestId} --url ws://localhost:18789${tokenArg}`,
+        );
+        // eslint-disable-next-line no-await-in-loop
         await waitForProcess(approveProc, CLI_TIMEOUT_MS);
 
+        // eslint-disable-next-line no-await-in-loop
         const approveLogs = await approveProc.getLogs();
-        const success = approveLogs.stdout?.toLowerCase().includes('approved') || approveProc.exitCode === 0;
+        const success =
+          approveLogs.stdout?.toLowerCase().includes('approved') || approveProc.exitCode === 0;
 
         results.push({ requestId: device.requestId, success });
       } catch (err) {
@@ -169,10 +182,10 @@ adminApi.post('/devices/approve-all', async (c) => {
       }
     }
 
-    const approvedCount = results.filter(r => r.success).length;
+    const approvedCount = results.filter((r) => r.success).length;
     return c.json({
-      approved: results.filter(r => r.success).map(r => r.requestId),
-      failed: results.filter(r => !r.success),
+      approved: results.filter((r) => r.success).map((r) => r.requestId),
+      failed: results.filter((r) => !r.success),
       message: `Approved ${approvedCount} of ${pending.length} device(s)`,
     });
   } catch (error) {
@@ -190,7 +203,6 @@ adminApi.get('/storage', async (c) => {
     c.env.CF_ACCOUNT_ID
   );
 
-  // Check which credentials are missing
   const missing: string[] = [];
   if (!c.env.R2_ACCESS_KEY_ID) missing.push('R2_ACCESS_KEY_ID');
   if (!c.env.R2_SECRET_ACCESS_KEY) missing.push('R2_SECRET_ACCESS_KEY');
@@ -198,17 +210,10 @@ adminApi.get('/storage', async (c) => {
 
   let lastSync: string | null = null;
 
-  // If R2 is configured, check for last sync timestamp
   if (hasCredentials) {
     try {
-      // Mount R2 if not already mounted
-      await mountR2Storage(sandbox, c.env);
-
-      // Check for sync marker file
-      const proc = await sandbox.startProcess(`cat ${R2_MOUNT_PATH}/.last-sync 2>/dev/null || echo ""`);
-      await waitForProcess(proc, 5000);
-      const logs = await proc.getLogs();
-      const timestamp = logs.stdout?.trim();
+      const result = await sandbox.exec('cat /tmp/.last-sync 2>/dev/null || echo ""');
+      const timestamp = result.stdout?.trim();
       if (timestamp && timestamp !== '') {
         lastSync = timestamp;
       }
@@ -241,11 +246,14 @@ adminApi.post('/storage/sync', async (c) => {
     });
   } else {
     const status = result.error?.includes('not configured') ? 400 : 500;
-    return c.json({
-      success: false,
-      error: result.error,
-      details: result.details,
-    }, status);
+    return c.json(
+      {
+        success: false,
+        error: result.error,
+        details: result.details,
+      },
+      status,
+    );
   }
 });
 
@@ -265,7 +273,7 @@ adminApi.post('/gateway/restart', async (c) => {
         console.error('Error killing process:', killErr);
       }
       // Wait a moment for the process to die
-      await new Promise(r => setTimeout(r, 2000));
+      await new Promise((r) => setTimeout(r, 2000));
     }
 
     // Start a new gateway in the background

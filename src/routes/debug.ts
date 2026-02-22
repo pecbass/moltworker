@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../types';
-import { findExistingMoltbotProcess } from '../gateway';
+import { findExistingMoltbotProcess, waitForProcess } from '../gateway';
 
 /**
  * Debug routes for inspecting container state
@@ -13,15 +13,15 @@ const debug = new Hono<AppEnv>();
 debug.get('/version', async (c) => {
   const sandbox = c.get('sandbox');
   try {
-    // Get moltbot version (CLI renamed to openclaw)
+    // Get OpenClaw version
     const versionProcess = await sandbox.startProcess('openclaw --version');
-    await new Promise(resolve => setTimeout(resolve, 500));
+    await new Promise((resolve) => setTimeout(resolve, 500));
     const versionLogs = await versionProcess.getLogs();
     const moltbotVersion = (versionLogs.stdout || versionLogs.stderr || '').trim();
 
     // Get node version
     const nodeProcess = await sandbox.startProcess('node --version');
-    await new Promise(resolve => setTimeout(resolve, 500));
+    await new Promise((resolve) => setTimeout(resolve, 500));
     const nodeLogs = await nodeProcess.getLogs();
     const nodeVersion = (nodeLogs.stdout || '').trim();
 
@@ -42,36 +42,38 @@ debug.get('/processes', async (c) => {
     const processes = await sandbox.listProcesses();
     const includeLogs = c.req.query('logs') === 'true';
 
-    const processData = await Promise.all(processes.map(async p => {
-      const data: Record<string, unknown> = {
-        id: p.id,
-        command: p.command,
-        status: p.status,
-        startTime: p.startTime?.toISOString(),
-        endTime: p.endTime?.toISOString(),
-        exitCode: p.exitCode,
-      };
+    const processData = await Promise.all(
+      processes.map(async (p) => {
+        const data: Record<string, unknown> = {
+          id: p.id,
+          command: p.command,
+          status: p.status,
+          startTime: p.startTime?.toISOString(),
+          endTime: p.endTime?.toISOString(),
+          exitCode: p.exitCode,
+        };
 
-      if (includeLogs) {
-        try {
-          const logs = await p.getLogs();
-          data.stdout = logs.stdout || '';
-          data.stderr = logs.stderr || '';
-        } catch {
-          data.logs_error = 'Failed to retrieve logs';
+        if (includeLogs) {
+          try {
+            const logs = await p.getLogs();
+            data.stdout = logs.stdout || '';
+            data.stderr = logs.stderr || '';
+          } catch {
+            data.logs_error = 'Failed to retrieve logs';
+          }
         }
-      }
 
-      return data;
-    }));
+        return data;
+      }),
+    );
 
     // Sort by status (running first, then starting, completed, failed)
     // Within each status, sort by startTime descending (newest first)
     const statusOrder: Record<string, number> = {
-      'running': 0,
-      'starting': 1,
-      'completed': 2,
-      'failed': 3,
+      running: 0,
+      starting: 1,
+      completed: 2,
+      failed: 3,
     };
 
     processData.sort((a, b) => {
@@ -81,8 +83,8 @@ debug.get('/processes', async (c) => {
         return statusA - statusB;
       }
       // Within same status, sort by startTime descending
-      const timeA = a.startTime as string || '';
-      const timeB = b.startTime as string || '';
+      const timeA = (a.startTime as string) || '';
+      const timeB = (b.startTime as string) || '';
       return timeB.localeCompare(timeA);
     });
 
@@ -123,28 +125,21 @@ debug.get('/gateway-api', async (c) => {
   }
 });
 
-// GET /debug/cli - Test moltbot CLI commands
+// GET /debug/cli - Test OpenClaw CLI commands
 debug.get('/cli', async (c) => {
   const sandbox = c.get('sandbox');
   const cmd = c.req.query('cmd') || 'openclaw --help';
 
   try {
     const proc = await sandbox.startProcess(cmd);
-
-    // Wait longer for command to complete
-    let attempts = 0;
-    while (attempts < 30) {
-      await new Promise(r => setTimeout(r, 500));
-      if (proc.status !== 'running') break;
-      attempts++;
-    }
+    await waitForProcess(proc, 120000);
 
     const logs = await proc.getLogs();
+    const status = proc.getStatus ? await proc.getStatus() : proc.status;
     return c.json({
       command: cmd,
-      status: proc.status,
+      status,
       exitCode: proc.exitCode,
-      attempts,
       stdout: logs.stdout || '',
       stderr: logs.stderr || '',
     });
@@ -163,70 +158,49 @@ debug.get('/logs', async (c) => {
 
     if (processId) {
       const processes = await sandbox.listProcesses();
-      process = processes.find(p => p.id === processId);
+      process = processes.find((p) => p.id === processId);
       if (!process) {
-        return c.json({
-          status: 'not_found',
-          message: `Process ${processId} not found`,
-          stdout: '',
-          stderr: '',
-        }, 404);
+        return c.json(
+          {
+            status: 'not_found',
+            message: `Process ${processId} not found`,
+            stdout: '',
+            stderr: '',
+          },
+          404,
+        );
       }
     } else {
       process = await findExistingMoltbotProcess(sandbox);
       if (!process) {
-        // Even if no process is running, we still want to read the logs!
-        // So we just log it and proceed.
-        // The file reading logic below handles process=null gracefully.
-        console.log('[DEBUG] No running Moltbot process found, but will attempt to read log file.');
-      }
-    }
-
-    // Read the log file directly as it contains the full history (redirected in start-moltbot.sh)
-    try {
-      const logProc = await sandbox.startProcess('cat /tmp/moltbot.log');
-      await new Promise(resolve => setTimeout(resolve, 500)); // Give it a moment
-      const logOutput = await logProc.getLogs();
-
-      return c.json({
-        status: 'ok',
-        process_id: process?.id || 'unknown',
-        process_status: process?.status || 'unknown',
-        stdout: logOutput.stdout || '',
-        stderr: logOutput.stderr || '',
-        file_content: true
-      });
-    } catch (readErr) {
-      console.error('Failed to read log file:', readErr);
-
-      // Fallback to process logs if file read fails and process exists
-      if (process) {
-        const logs = await process.getLogs();
         return c.json({
-          status: 'ok',
-          process_id: process.id,
-          process_status: process.status,
-          stdout: logs.stdout || '',
-          stderr: logs.stderr || '',
-          file_content: false
-        });
-      } else {
-        // No file read, no process
-        return c.json({
-          status: 'error',
-          message: 'Failed to read log file and no process running',
-          read_error: readErr instanceof Error ? readErr.message : String(readErr)
+          status: 'no_process',
+          message: 'No Moltbot process is currently running',
+          stdout: '',
+          stderr: '',
         });
       }
     }
+
+    const logs = await process.getLogs();
+    return c.json({
+      status: 'ok',
+      process_id: process.id,
+      process_status: process.status,
+      stdout: logs.stdout || '',
+      stderr: logs.stderr || '',
+    });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    return c.json({
-      status: 'error',
-      message: `Failed to get logs: ${errorMessage}`,
-      stdout: '',
-      stderr: '',
-    }, 500);
+    return c.json(
+      {
+        status: 'error',
+        message: `Failed to get logs: ${errorMessage}`,
+        stdout: '',
+        stderr: '',
+      },
+      500,
+    );
   }
 });
 
@@ -374,7 +348,7 @@ debug.get('/env', async (c) => {
     has_cf_account_id: !!c.env.CF_ACCOUNT_ID,
     dev_mode: c.env.DEV_MODE,
     debug_routes: c.env.DEBUG_ROUTES,
-    bind_mode: c.env.CLAWDBOT_BIND_MODE,
+    bind_mode: 'lan',
     cf_access_team_domain: c.env.CF_ACCESS_TEAM_DOMAIN,
     has_cf_access_aud: !!c.env.CF_ACCESS_AUD,
   });
@@ -386,13 +360,7 @@ debug.get('/container-config', async (c) => {
 
   try {
     const proc = await sandbox.startProcess('cat /root/.openclaw/openclaw.json');
-
-    let attempts = 0;
-    while (attempts < 10) {
-      await new Promise(r => setTimeout(r, 200));
-      if (proc.status !== 'running') break;
-      attempts++;
-    }
+    await waitForProcess(proc, 5000);
 
     const logs = await proc.getLogs();
     const stdout = logs.stdout || '';

@@ -26,7 +26,7 @@ import { getSandbox, Sandbox, type SandboxOptions } from '@cloudflare/sandbox';
 import type { AppEnv, MoltbotEnv } from './types';
 import { MOLTBOT_PORT } from './config';
 import { createAccessMiddleware } from './auth';
-import { ensureMoltbotGateway, findExistingMoltbotProcess, syncToR2 } from './gateway';
+import { ensureMoltbotGateway, findExistingMoltbotProcess } from './gateway';
 import { publicRoutes, api, adminUi, debug, cdp } from './routes';
 import { redactSensitiveParams } from './utils/logging';
 import loadingPageHtml from './assets/loading.html';
@@ -72,15 +72,20 @@ function validateRequiredEnv(env: MoltbotEnv): string[] {
     }
   }
 
-  // Check for AI Gateway or direct Anthropic configuration
-  if (env.AI_GATEWAY_API_KEY) {
-    // AI Gateway requires both API key and base URL
-    if (!env.AI_GATEWAY_BASE_URL) {
-      missing.push('AI_GATEWAY_BASE_URL (required when using AI_GATEWAY_API_KEY)');
-    }
-  } else if (!env.ANTHROPIC_API_KEY) {
-    // Direct Anthropic access requires API key
-    missing.push('ANTHROPIC_API_KEY or AI_GATEWAY_API_KEY');
+  // Check for AI provider configuration (at least one must be set)
+  const hasCloudflareGateway = !!(
+    env.CLOUDFLARE_AI_GATEWAY_API_KEY &&
+    env.CF_AI_GATEWAY_ACCOUNT_ID &&
+    env.CF_AI_GATEWAY_GATEWAY_ID
+  );
+  const hasLegacyGateway = !!(env.AI_GATEWAY_API_KEY && env.AI_GATEWAY_BASE_URL);
+  const hasAnthropicKey = !!env.ANTHROPIC_API_KEY;
+  const hasOpenAIKey = !!env.OPENAI_API_KEY;
+
+  if (!hasCloudflareGateway && !hasLegacyGateway && !hasAnthropicKey && !hasOpenAIKey) {
+    missing.push(
+      'ANTHROPIC_API_KEY, OPENAI_API_KEY, or CLOUDFLARE_AI_GATEWAY_API_KEY + CF_AI_GATEWAY_ACCOUNT_ID + CF_AI_GATEWAY_GATEWAY_ID',
+    );
   }
 
   return missing;
@@ -88,11 +93,11 @@ function validateRequiredEnv(env: MoltbotEnv): string[] {
 
 /**
  * Build sandbox options based on environment configuration.
- * 
+ *
  * SANDBOX_SLEEP_AFTER controls how long the container stays alive after inactivity:
  * - 'never' (default): Container stays alive indefinitely (recommended due to long cold starts)
  * - Duration string: e.g., '10m', '1h', '30s' - container sleeps after this period of inactivity
- * 
+ *
  * To reduce costs at the expense of cold start latency, set SANDBOX_SLEEP_AFTER to a duration:
  *   npx wrangler secret put SANDBOX_SLEEP_AFTER
  *   # Enter: 10m (or 1h, 30m, etc.)
@@ -176,12 +181,15 @@ app.use('*', async (c, next) => {
     }
 
     // Return JSON error for API requests
-    return c.json({
-      error: 'Configuration error',
-      message: 'Required environment variables are not configured',
-      missing: missingVars,
-      hint: 'Set these using: wrangler secret put <VARIABLE_NAME>',
-    }, 503);
+    return c.json(
+      {
+        error: 'Configuration error',
+        message: 'Required environment variables are not configured',
+        missing: missingVars,
+        hint: 'Set these using: wrangler secret put <VARIABLE_NAME>',
+      },
+      503,
+    );
   }
 
   return next();
@@ -193,7 +201,7 @@ app.use('*', async (c, next) => {
   const acceptsHtml = c.req.header('Accept')?.includes('text/html');
   const middleware = createAccessMiddleware({
     type: acceptsHtml ? 'html' : 'json',
-    redirectOnMissing: acceptsHtml
+    redirectOnMissing: acceptsHtml,
   });
 
   return middleware(c, next);
@@ -227,7 +235,7 @@ app.all('*', async (c) => {
 
   // Check if gateway is already running
   const existingProcess = await findExistingMoltbotProcess(sandbox);
-  const isGatewayReady = existingProcess !== null && (existingProcess.status === 'running' || existingProcess.status === 'starting');
+  const isGatewayReady = existingProcess !== null && existingProcess.status === 'running';
 
   // For browser requests (non-WebSocket, non-API), show loading page if gateway isn't ready
   const isWebSocketRequest = request.headers.get('Upgrade')?.toLowerCase() === 'websocket';
@@ -240,7 +248,7 @@ app.all('*', async (c) => {
     c.executionCtx.waitUntil(
       ensureMoltbotGateway(sandbox, c.env).catch((err: Error) => {
         console.error('[PROXY] Background gateway start failed:', err);
-      })
+      }),
     );
 
     // Return the loading page immediately
@@ -261,75 +269,14 @@ app.all('*', async (c) => {
       hint = 'Gateway ran out of memory. Try again or check for memory leaks.';
     }
 
-    return c.json({
-      error: 'Moltbot gateway failed to start',
-      details: errorMessage,
-      hint,
-    }, 503);
-  }
-
-  // COOKIE BRIDGE LOGIC:
-  // 1. If request has ?token=X, we want to set a cookie so subsequent requests (CSS/JS) work.
-  // 2. If request has no token but has cookie, we inject token into upstream URL.
-
-  const tokenParam = url.searchParams.get('token');
-  const cookieHeader = request.headers.get('Cookie');
-  let tokenToUse = tokenParam;
-
-  // If no token in URL, try to find it in cookies
-  if (!tokenToUse && cookieHeader) {
-    const cookies = cookieHeader.split(';').map(c => c.trim());
-    const tokenCookie = cookies.find(c => c.startsWith('moltbot-token='));
-    if (tokenCookie) {
-      tokenToUse = tokenCookie.split('=')[1];
-      console.log('[PROXY] Found token in cookie, injecting into upstream request');
-    }
-  }
-
-  // If we found a token (from URL or Cookie) and there isn't one in the URL already,
-  // we need to inject it for the container request.
-  //
-  // IMPORTANT: For the container-side connection, we use the INTERNAL gateway token
-  // (MOLTBOT_GATEWAY_TOKEN), NOT the browser's token. The browser token is for
-  // Worker-level auth (handled by middleware). The internal token is what the
-  // OpenClaw gateway inside the container expects. OpenClaw 2026.2.9+ strictly
-  // enforces token auth on every WebSocket connection.
-  const internalGatewayToken = c.env.MOLTBOT_GATEWAY_TOKEN;
-  const containerToken = internalGatewayToken || tokenToUse;
-
-  let requestToContainer = request;
-  if (containerToken) {
-    const originalUrl = new URL(request.url);
-    // Use localhost IP to ensure sandbox treats it as an internal request and preserves query params
-    const newUrl = new URL(originalUrl.pathname + originalUrl.search, 'http://127.0.0.1');
-
-    // Inject the INTERNAL gateway token into the container request
-    // 1. URL Query Param (Primary — OpenClaw reads this first)
-    newUrl.searchParams.set('token', containerToken);
-
-    // 2. Authorization Header (Backup)
-    const newHeaders = new Headers(request.headers);
-    newHeaders.set('Authorization', `Bearer ${containerToken}`);
-
-    // 3. Rewrite Origin header to gateway's loopback address.
-    // OpenClaw 2026.2.9+ rejects WebSocket connections from non-local origins.
-    // Since this Worker IS the trusted auth proxy, we rewrite Origin so the
-    // gateway treats the connection as local, bypassing the origin check.
-    newHeaders.set('Origin', 'http://127.0.0.1:18789');
-    newHeaders.set('Host', '127.0.0.1:18789');
-
-    // NOTE: Sec-WebSocket-Protocol and x-moltbot-token were removed intentionally.
-    // Setting Sec-WebSocket-Protocol to a raw token breaks the WS handshake —
-    // the gateway doesn't recognize it as a valid subprotocol and falls back to
-    // device-token auth, triggering "Pairing required" (1008) errors.
-
-    // Create new request with updated URL and headers
-    requestToContainer = new Request(newUrl.toString(), {
-      method: request.method,
-      headers: newHeaders,
-      body: request.body,
-      redirect: request.redirect
-    });
+    return c.json(
+      {
+        error: 'Moltbot gateway failed to start',
+        details: errorMessage,
+        hint,
+      },
+      503,
+    );
   }
 
   // Proxy to Moltbot with WebSocket message interception
@@ -342,8 +289,18 @@ app.all('*', async (c) => {
       console.log('[WS] URL:', url.pathname + redactedSearch);
     }
 
+    // Inject gateway token into WebSocket request if not already present.
+    // CF Access redirects strip query params, so authenticated users lose ?token=.
+    // Since the user already passed CF Access auth, we inject the token server-side.
+    let wsRequest = request;
+    if (c.env.MOLTBOT_GATEWAY_TOKEN && !url.searchParams.has('token')) {
+      const tokenUrl = new URL(url.toString());
+      tokenUrl.searchParams.set('token', c.env.MOLTBOT_GATEWAY_TOKEN);
+      wsRequest = new Request(tokenUrl.toString(), request);
+    }
+
     // Get WebSocket connection to the container
-    const containerResponse = await sandbox.wsConnect(requestToContainer, MOLTBOT_PORT);
+    const containerResponse = await sandbox.wsConnect(wsRequest, MOLTBOT_PORT);
     console.log('[WS] wsConnect response status:', containerResponse.status);
 
     // Get the container-side WebSocket
@@ -373,7 +330,11 @@ app.all('*', async (c) => {
     // Relay messages from client to container
     serverWs.addEventListener('message', (event) => {
       if (debugLogs) {
-        console.log('[WS] Client -> Container:', typeof event.data, typeof event.data === 'string' ? event.data.slice(0, 200) : '(binary)');
+        console.log(
+          '[WS] Client -> Container:',
+          typeof event.data,
+          typeof event.data === 'string' ? event.data.slice(0, 200) : '(binary)',
+        );
       }
       if (containerWs.readyState === WebSocket.OPEN) {
         containerWs.send(event.data);
@@ -385,7 +346,11 @@ app.all('*', async (c) => {
     // Relay messages from container to client, with error transformation
     containerWs.addEventListener('message', (event) => {
       if (debugLogs) {
-        console.log('[WS] Container -> Client (raw):', typeof event.data, typeof event.data === 'string' ? event.data.slice(0, 500) : '(binary)');
+        console.log(
+          '[WS] Container -> Client (raw):',
+          typeof event.data,
+          typeof event.data === 'string' ? event.data.slice(0, 500) : '(binary)',
+        );
       }
       let data = event.data;
 
@@ -463,22 +428,14 @@ app.all('*', async (c) => {
     });
   }
 
-
-  console.log('[HTTP] Proxying:', url.pathname + (tokenParam ? ' [token hidden]' : ''));
-  const httpResponse = await sandbox.containerFetch(requestToContainer, MOLTBOT_PORT);
+  console.log('[HTTP] Proxying:', url.pathname + url.search);
+  const httpResponse = await sandbox.containerFetch(request, MOLTBOT_PORT);
   console.log('[HTTP] Response status:', httpResponse.status);
 
   // Add debug header to verify worker handled the request
   const newHeaders = new Headers(httpResponse.headers);
   newHeaders.set('X-Worker-Debug', 'proxy-to-moltbot');
   newHeaders.set('X-Debug-Path', url.pathname);
-
-  // If the user provided a token in the URL, set it as a cookie for future requests
-  if (tokenParam) {
-    console.log('[PROXY] Setting authentication cookie');
-    // Set a long-lived cookie (7 days)
-    newHeaders.append('Set-Cookie', `moltbot-token=${tokenParam}; Path=/; Max-Age=604800; Secure; SameSite=None; HttpOnly`);
-  }
 
   return new Response(httpResponse.body, {
     status: httpResponse.status,
@@ -487,29 +444,6 @@ app.all('*', async (c) => {
   });
 });
 
-/**
- * Scheduled handler for cron triggers.
- * Syncs moltbot config/state from container to R2 for persistence.
- */
-async function scheduled(
-  _event: ScheduledEvent,
-  env: MoltbotEnv,
-  _ctx: ExecutionContext
-): Promise<void> {
-  const options = buildSandboxOptions(env);
-  const sandbox = getSandbox(env.Sandbox, 'moltbot', options);
-
-  console.log('[cron] Starting backup sync to R2...');
-  const result = await syncToR2(sandbox, env);
-
-  if (result.success) {
-    console.log('[cron] Backup sync completed successfully at', result.lastSync);
-  } else {
-    console.error('[cron] Backup sync failed:', result.error, result.details || '');
-  }
-}
-
 export default {
   fetch: app.fetch,
-  scheduled,
 };

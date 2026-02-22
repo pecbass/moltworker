@@ -31,9 +31,10 @@ export function isE2ETestMode(env: MoltbotEnv): boolean {
  */
 export function extractJWT(c: Context<AppEnv>): string | null {
   const jwtHeader = c.req.header('CF-Access-JWT-Assertion');
-  const jwtCookie = c.req.raw.headers.get('Cookie')
+  const jwtCookie = c.req.raw.headers
+    .get('Cookie')
     ?.split(';')
-    .find(cookie => cookie.trim().startsWith('CF_Authorization='))
+    .find((cookie) => cookie.trim().startsWith('CF_Authorization='))
     ?.split('=')[1];
 
   return jwtHeader || jwtCookie || null;
@@ -41,7 +42,7 @@ export function extractJWT(c: Context<AppEnv>): string | null {
 
 /**
  * Create a Cloudflare Access authentication middleware
- * 
+ *
  * @param options - Middleware options
  * @returns Hono middleware function
  */
@@ -105,19 +106,25 @@ export function createAccessMiddleware(options: AccessMiddlewareOptions) {
       }
 
       if (type === 'json') {
-        return c.json({
-          error: 'Cloudflare Access not configured',
-          hint: 'Set CF_ACCESS_TEAM_DOMAIN and CF_ACCESS_AUD environment variables',
-        }, 500);
+        return c.json(
+          {
+            error: 'Cloudflare Access not configured',
+            hint: 'Set CF_ACCESS_TEAM_DOMAIN and CF_ACCESS_AUD environment variables',
+          },
+          500,
+        );
       } else {
-        return c.html(`
+        return c.html(
+          `
           <html>
             <body>
               <h1>Admin UI Not Configured</h1>
               <p>Set CF_ACCESS_TEAM_DOMAIN and CF_ACCESS_AUD environment variables.</p>
             </body>
           </html>
-        `, 500);
+        `,
+          500,
+        );
       }
     }
 
@@ -130,12 +137,16 @@ export function createAccessMiddleware(options: AccessMiddlewareOptions) {
       }
 
       if (type === 'json') {
-        return c.json({
-          error: 'Unauthorized',
-          hint: 'Missing Cloudflare Access JWT. Ensure this route is protected by Cloudflare Access.',
-        }, 401);
+        return c.json(
+          {
+            error: 'Unauthorized',
+            hint: 'Missing Cloudflare Access JWT. Ensure this route is protected by Cloudflare Access.',
+          },
+          401,
+        );
       } else {
-        return c.html(`
+        return c.html(
+          `
           <html>
             <body>
               <h1>Unauthorized</h1>
@@ -143,7 +154,9 @@ export function createAccessMiddleware(options: AccessMiddlewareOptions) {
               <a href="https://${teamDomain}">Login</a>
             </body>
           </html>
-        `, 401);
+        `,
+          401,
+        );
       }
     }
 
@@ -156,12 +169,16 @@ export function createAccessMiddleware(options: AccessMiddlewareOptions) {
       console.error('Access JWT verification failed:', err);
 
       if (type === 'json') {
-        return c.json({
-          error: 'Unauthorized',
-          details: err instanceof Error ? err.message : 'JWT verification failed',
-        }, 401);
+        return c.json(
+          {
+            error: 'Unauthorized',
+            details: err instanceof Error ? err.message : 'JWT verification failed',
+          },
+          401,
+        );
       } else {
-        return c.html(`
+        return c.html(
+          `
           <html>
             <body>
               <h1>Unauthorized</h1>
@@ -169,7 +186,9 @@ export function createAccessMiddleware(options: AccessMiddlewareOptions) {
               <a href="https://${teamDomain}">Login again</a>
             </body>
           </html>
-        `, 401);
+        `,
+          401,
+        );
       }
     }
   };
