@@ -174,6 +174,14 @@ if (process.env.OPENCLAW_DEV_MODE === 'true') {
 // so we don't need to patch the provider config. Writing a provider
 // entry without a models array breaks OpenClaw's config validation.
 
+// General model override (e.g. OPENCLAW_MODEL_OVERRIDE=anthropic/claude-3-7-sonnet-20250219)
+if (process.env.OPENCLAW_MODEL_OVERRIDE) {
+    config.agents = config.agents || {};
+    config.agents.defaults = config.agents.defaults || {};
+    config.agents.defaults.model = { primary: process.env.OPENCLAW_MODEL_OVERRIDE };
+    console.log('Model overridden to: ' + process.env.OPENCLAW_MODEL_OVERRIDE);
+}
+
 // AI Gateway model override (CF_AI_GATEWAY_MODEL=provider/model-id)
 // Adds a provider entry for any AI Gateway provider and sets it as default model.
 // Examples:
