@@ -84,7 +84,7 @@
   // due to a wrangler secret binding bug workaround.
   // Replace <YOUR_TOKEN> with your actual token.
   "vars": {
-    "MOLTBOT_GATEWAY_TOKEN": "<YOUR_TOKEN>"
+    "MOLTBOT_GATEWAY_TOKEN": "9296e1a21ad7b9622585bd1022fb4313bb624837a70664e26dfabe1955720755"
   },
   // Note: CF_ACCOUNT_ID should be set via `wrangler secret put CF_ACCOUNT_ID`
   // Secrets to configure via `wrangler secret put`:
