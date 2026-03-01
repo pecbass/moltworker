@@ -268,6 +268,19 @@ if (process.env.SLACK_BOT_TOKEN && process.env.SLACK_APP_TOKEN) {
     };
 }
 
+// OpenAI configuration
+if (process.env.OPENAI_API_KEY) {
+    config.models = config.models || {};
+    config.models.providers = config.models.providers || {};
+    config.models.providers.openai = {
+        baseUrl: 'https://api.openai.com/v1',
+        apiKey: process.env.OPENAI_API_KEY,
+        api: 'openai-completions',
+        models: [{ id: 'gpt-5-mini', name: 'GPT-5 mini', contextWindow: 128000, maxTokens: 4096 }]
+    };
+    console.log('OpenAI provider configured from environment variable');
+}
+
 fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
 console.log('Configuration patched successfully');
 EOFPATCH
