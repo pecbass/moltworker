@@ -71,14 +71,7 @@ export async function createSnapshot(sandbox: Sandbox): Promise<BackupHandle> {
   const handle = await sandbox.createBackup({
     dir: '/root',
     ttl: 604800, // 7 days
-    excludes: [
-      '*.lock',
-      '*.log',
-      '*.tmp',
-      '.git',
-      'node_modules',
-      '.config/rclone',
-    ],
+    excludes: ['*.lock', '*.log', '*.tmp', '.git', 'node_modules', '.config/rclone'],
   });
   cachedHandle = handle;
   console.log(`[persistence] Backup ${handle.id} created in ${Date.now() - t0}ms`);

@@ -1,11 +1,7 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../types';
 import { createAccessMiddleware } from '../auth';
-import {
-  ensureMoltbotGateway,
-  findExistingMoltbotProcess,
-  waitForProcess,
-} from '../gateway';
+import { ensureMoltbotGateway, findExistingMoltbotProcess, waitForProcess } from '../gateway';
 import { createSnapshot, getCachedHandle } from '../persistence';
 
 // CLI commands can take 10-15 seconds to complete due to WebSocket connection overhead
@@ -232,7 +228,8 @@ adminApi.post('/storage/sync', async (c) => {
     });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    const status = errorMessage.includes('not configured') || errorMessage.includes('Missing') ? 400 : 500;
+    const status =
+      errorMessage.includes('not configured') || errorMessage.includes('Missing') ? 400 : 500;
     return c.json(
       {
         success: false,
