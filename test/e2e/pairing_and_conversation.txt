@@ -13,6 +13,9 @@ wait for pending devices and approve
 ===
 plwr -S moltworker-e2e wait 'button:has-text("Approve All")' -T 120000
 plwr -S moltworker-e2e click 'button:has-text("Approve All")' -T 10000
+# Wait for the approval API call to finish before navigating away.
+# The button changes to "Approving..." then disappears once complete.
+plwr -S moltworker-e2e wait-not 'button:has-text("Approv")' -T 30000
 ---
 
 ===
