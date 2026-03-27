@@ -111,30 +111,13 @@ wait for gateway to restart after restore
 %require
 ===
 WORKER_URL=$(cat "$CCTR_FIXTURE_DIR/worker-url.txt")
-# The restart handler kills the old process and clears the persistence cache.
-# We need to wait for the OLD process to die, then for /api/status to start
-# a NEW process (which triggers restoreIfNeeded first).
-# First get the old process ID from the restart response stored earlier,
-# then poll until we see a different process ID or the gateway is fully up.
-OLD_PID=""
-# Wait for the old process to stop
-for i in $(seq 1 12); do
+# The restart handler kills the old process (waiting for it to die) and
+# clears the persistence cache. Hitting /api/status starts a new gateway
+# (after running restoreIfNeeded). Poll until the gateway is up.
+for i in $(seq 1 30); do
     STATUS=$(./curl-auth -s "$WORKER_URL/api/status" 2>/dev/null || echo "")
     OK=$(echo "$STATUS" | jq -r '.ok // false' 2>/dev/null)
-    PID=$(echo "$STATUS" | jq -r '.processId // empty' 2>/dev/null)
-    if [ "$OK" = "false" ] || [ -z "$PID" ]; then
-        echo "Old gateway stopped"
-        break
-    fi
-    if [ -z "$OLD_PID" ]; then OLD_PID="$PID"; fi
-    sleep 3
-done
-# Now wait for the new process to start (this triggers restoreIfNeeded)
-for i in $(seq 1 60); do
-    STATUS=$(./curl-auth -s "$WORKER_URL/api/status" 2>/dev/null || echo "")
-    OK=$(echo "$STATUS" | jq -r '.ok // false' 2>/dev/null)
-    PID=$(echo "$STATUS" | jq -r '.processId // empty' 2>/dev/null)
-    if [ "$OK" = "true" ] && [ -n "$PID" ] && [ "$PID" != "$OLD_PID" ]; then
+    if [ "$OK" = "true" ]; then
         echo "$STATUS" | jq .
         exit 0
     fi

@@ -255,8 +255,15 @@ adminApi.post('/gateway/restart', async (c) => {
       } catch (killErr) {
         console.error('Error killing process:', killErr);
       }
-      // Wait a moment for the process to die
-      await new Promise((r) => setTimeout(r, 2000));
+      // Wait for the process to actually stop
+      for (let i = 0; i < 10; i++) {
+        const proc = await findExistingGatewayProcess(sandbox);
+        if (!proc || proc.status !== 'running') {
+          console.log('Gateway process stopped after', (i + 1) * 2, 'seconds');
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+      }
     }
 
     // Clear the restore flag so the next request re-restores from R2.
