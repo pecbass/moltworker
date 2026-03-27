@@ -152,7 +152,15 @@ verify marker file restored from R2 after restart
 %require
 ===
 WORKER_URL=$(cat "$CCTR_FIXTURE_DIR/worker-url.txt")
-./curl-auth -s "$WORKER_URL/debug/cli?cmd=cat+/home/openclaw/clawd/e2e-marker.txt" | jq .
+for i in $(seq 1 6); do
+    RESPONSE=$(./curl-auth -s "$WORKER_URL/debug/cli?cmd=cat+/home/openclaw/clawd/e2e-marker.txt" 2>/dev/null || echo "")
+    if echo "$RESPONSE" | jq -r '.stdout // empty' 2>/dev/null | grep -q "e2e-persistence-test"; then
+        echo "$RESPONSE" | jq .
+        exit 0
+    fi
+    sleep 5
+done
+echo "$RESPONSE" | jq .
 ---
 {{ result: json object }}
 ---
