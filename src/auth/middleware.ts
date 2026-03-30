@@ -67,8 +67,8 @@ export function createAccessMiddleware(options: AccessMiddlewareOptions) {
       const cookieHeader = c.req.raw.headers.get('Cookie');
       const cookieToken = cookieHeader
         ?.split(';')
-        .map(c => c.trim())
-        .find(c => c.startsWith('moltbot-token='))
+        .map((cookie) => cookie.trim())
+        .find((cookie) => cookie.startsWith('moltbot-token='))
         ?.split('=')[1];
 
       if (queryToken === gatewayToken || cookieToken === gatewayToken) {
@@ -85,15 +85,19 @@ export function createAccessMiddleware(options: AccessMiddlewareOptions) {
       // If token is configured but not provided/matched, hint about it
       if (gatewayToken) {
         if (type === 'json') {
-          return c.json({
-            error: 'Unauthorized',
-            hint: 'Provide ?token=... or configured Cloudflare Access',
-          }, 401);
+          return c.json(
+            {
+              error: 'Unauthorized',
+              hint: 'Provide ?token=... or configured Cloudflare Access',
+            },
+            401,
+          );
         } else {
           // For HTML, we might want to show a simple login page or just redirect if token missing
           // For now, let's just fall through to the CF Access error but mention the token
           // Actually, if CF Access is NOT configured but Token IS, we should just show Unauthorized
-          return c.html(`
+          return c.html(
+            `
               <html>
                 <body>
                   <h1>Unauthorized</h1>
@@ -101,7 +105,9 @@ export function createAccessMiddleware(options: AccessMiddlewareOptions) {
                   <p>Please use the link with ?token=... provided in your deployment output.</p>
                 </body>
               </html>
-            `, 401);
+            `,
+            401,
+          );
         }
       }
 
