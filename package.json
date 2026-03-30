@@ -21,13 +21,14 @@
   },
   "dependencies": {
     "@cloudflare/puppeteer": "^1.0.5",
+    "croner": "^9.1.0",
     "hono": "^4.11.6",
     "jose": "^6.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
-    "@cloudflare/sandbox": "*",
+    "@cloudflare/sandbox": "^0.7.20",
     "@cloudflare/vite-plugin": "^1.0.0",
     "@cloudflare/workers-types": "^4.20250109.0",
     "@types/node": "^22.0.0",

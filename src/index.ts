@@ -1,8 +1,8 @@
 /**
- * Moltbot + Cloudflare Sandbox
+ * OpenClaw + Cloudflare Sandbox
  *
- * This Worker runs Moltbot personal AI assistant in a Cloudflare Sandbox container.
- * It proxies all requests to the Moltbot Gateway's web UI and WebSocket endpoint.
+ * This Worker runs OpenClaw personal AI assistant in a Cloudflare Sandbox container.
+ * It proxies all requests to the OpenClaw Gateway's web UI and WebSocket endpoint.
  *
  * Features:
  * - Web UI (Control Dashboard + WebChat) at /
@@ -23,12 +23,14 @@
 import { Hono } from 'hono';
 import { getSandbox, Sandbox, type SandboxOptions } from '@cloudflare/sandbox';
 
-import type { AppEnv, MoltbotEnv } from './types';
-import { MOLTBOT_PORT } from './config';
+import type { AppEnv, OpenClawEnv } from './types';
+import { GATEWAY_PORT } from './config';
 import { createAccessMiddleware } from './auth';
-import { ensureMoltbotGateway, findExistingMoltbotProcess } from './gateway';
+import { ensureGateway, findExistingGatewayProcess, killGateway } from './gateway';
 import { publicRoutes, api, adminUi, debug, cdp } from './routes';
 import { redactSensitiveParams } from './utils/logging';
+import { restoreIfNeeded, createSnapshot } from './persistence';
+import { handleScheduled } from './cron/handler';
 import loadingPageHtml from './assets/loading.html';
 import configErrorHtml from './assets/config-error.html';
 
@@ -47,13 +49,25 @@ function transformErrorMessage(message: string, host: string): string {
   return message;
 }
 
+/**
+ * Check if an error indicates the gateway process has crashed.
+ * The Sandbox SDK throws this when containerFetch/wsConnect is called
+ * but the target process is no longer listening.
+ */
+function isGatewayCrashedError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return error.message.includes('is not listening');
+}
+
+// killGateway is imported from './gateway' (shared with restart handler)
+
 export { Sandbox };
 
 /**
  * Validate required environment variables.
  * Returns an array of missing variable descriptions, or empty array if all are set.
  */
-function validateRequiredEnv(env: MoltbotEnv): string[] {
+function validateRequiredEnv(env: OpenClawEnv): string[] {
   const missing: string[] = [];
   const isTestMode = env.DEV_MODE === 'true' || env.E2E_TEST_MODE === 'true';
 
@@ -102,7 +116,7 @@ function validateRequiredEnv(env: MoltbotEnv): string[] {
  *   npx wrangler secret put SANDBOX_SLEEP_AFTER
  *   # Enter: 10m (or 1h, 30m, etc.)
  */
-function buildSandboxOptions(env: MoltbotEnv): SandboxOptions {
+export function buildSandboxOptions(env: OpenClawEnv): SandboxOptions {
   const sleepAfter = env.SANDBOX_SLEEP_AFTER?.toLowerCase() || 'never';
 
   // 'never' means keep the container alive indefinitely
@@ -132,11 +146,23 @@ app.use('*', async (c, next) => {
   await next();
 });
 
-// Middleware: Initialize sandbox for all requests
+// Middleware: Initialize sandbox stub and restore backup if available.
+// Note: we intentionally do NOT call sandbox.start() here. The Sandbox SDK's
+// containerFetch() auto-starts the container when needed, and the catch-all
+// proxy route uses ensureGateway() which handles startup explicitly.
+// Adding start() here would add an unnecessary RPC call on every request,
+// including static assets and health checks that don't need the container.
 app.use('*', async (c, next) => {
   const options = buildSandboxOptions(c.env);
-  const sandbox = getSandbox(c.env.Sandbox, 'moltbot', options);
+  const sandbox = getSandbox(c.env.Sandbox, 'openclaw', options);
   c.set('sandbox', sandbox);
+
+  // NOTE: restoreIfNeeded is NOT called here in the global middleware.
+  // It's called only from the catch-all route (gateway proxy) and /api/status.
+  // Calling it on admin routes (sync, debug/cli) would mount a FUSE overlay
+  // that interferes with createBackup — the SDK resets the overlay on backup,
+  // wiping any upper-layer writes made since the last restore.
+
   await next();
 });
 
@@ -164,8 +190,8 @@ app.use('*', async (c, next) => {
     return next();
   }
 
-  // Skip validation in dev mode
-  if (c.env.DEV_MODE === 'true') {
+  // Skip validation in dev/test mode
+  if (c.env.DEV_MODE === 'true' || c.env.E2E_TEST_MODE === 'true') {
     return next();
   }
 
@@ -223,7 +249,7 @@ app.use('/debug/*', async (c, next) => {
 app.route('/debug', debug);
 
 // =============================================================================
-// CATCH-ALL: Proxy to Moltbot gateway
+// CATCH-ALL: Proxy to OpenClaw gateway
 // =============================================================================
 
 app.all('*', async (c) => {
@@ -233,58 +259,58 @@ app.all('*', async (c) => {
 
   console.log('[PROXY] Handling request:', url.pathname);
 
-  // Check if gateway is already running
-  const existingProcess = await findExistingMoltbotProcess(sandbox);
-  const isGatewayReady = existingProcess !== null && existingProcess.status === 'running';
-
-  // For browser requests (non-WebSocket, non-API), show loading page if gateway isn't ready
   const isWebSocketRequest = request.headers.get('Upgrade')?.toLowerCase() === 'websocket';
   const acceptsHtml = request.headers.get('Accept')?.includes('text/html');
 
-  if (!isGatewayReady && !isWebSocketRequest && acceptsHtml) {
-    console.log('[PROXY] Gateway not ready, serving loading page');
-
-    // Start the gateway in the background (don't await)
-    c.executionCtx.waitUntil(
-      ensureMoltbotGateway(sandbox, c.env).catch((err: Error) => {
-        console.error('[PROXY] Background gateway start failed:', err);
-      }),
-    );
-
-    // Return the loading page immediately
-    return c.html(loadingPageHtml);
-  }
-
-  // Ensure moltbot is running (this will wait for startup)
-  try {
-    await ensureMoltbotGateway(sandbox, c.env);
-  } catch (error) {
-    console.error('[PROXY] Failed to start Moltbot:', error);
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-
-    let hint = 'Check worker logs with: wrangler tail';
-    if (!c.env.ANTHROPIC_API_KEY) {
-      hint = 'ANTHROPIC_API_KEY is not set. Run: wrangler secret put ANTHROPIC_API_KEY';
-    } else if (errorMessage.includes('heap out of memory') || errorMessage.includes('OOM')) {
-      hint = 'Gateway ran out of memory. Try again or check for memory leaks.';
+  // For browser HTML requests, check if the gateway is running before proxying.
+  // If not running, serve the loading page immediately. The loading page polls
+  // /api/status which handles restore + gateway start. We use a very short timeout
+  // (3s) on findExistingGatewayProcess to avoid blocking — if it doesn't respond,
+  // we assume the gateway isn't ready.
+  if (!isWebSocketRequest && acceptsHtml) {
+    let gatewayReady = false;
+    try {
+      const proc = await Promise.race([
+        findExistingGatewayProcess(sandbox),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 3_000)),
+      ]);
+      gatewayReady = proc !== null && proc.status === 'running';
+    } catch {
+      // Treat as not ready
     }
-
-    return c.json(
-      {
-        error: 'Moltbot gateway failed to start',
-        details: errorMessage,
-        hint,
-      },
-      503,
-    );
+    if (!gatewayReady) {
+      console.log('[PROXY] Gateway not ready for HTML request, serving loading page');
+      return c.html(loadingPageHtml);
+    }
   }
 
-  // Proxy to Moltbot with WebSocket message interception
+  // For non-WebSocket, non-HTML requests (API calls, static assets), we need
+  // the gateway to be running. Restore first, then start.
+  if (!isWebSocketRequest && !acceptsHtml) {
+    try {
+      await restoreIfNeeded(sandbox, c.env.BACKUP_BUCKET);
+    } catch {
+      // non-fatal
+    }
+    try {
+      await ensureGateway(sandbox, c.env);
+    } catch (error) {
+      console.error('[PROXY] Failed to start gateway:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      return c.json({ error: 'Gateway not ready', details: errorMessage }, 503);
+    }
+  }
+
+  // For HTML and WebSocket requests, try to proxy directly. If the gateway
+  // isn't running, containerFetch/wsConnect will throw and we serve the
+  // loading page (HTML) or return an error (WebSocket).
+
+  // Proxy to gateway with WebSocket message interception
   if (isWebSocketRequest) {
     const debugLogs = c.env.DEBUG_ROUTES === 'true';
     const redactedSearch = redactSensitiveParams(url);
 
-    console.log('[WS] Proxying WebSocket connection to Moltbot');
+    console.log('[WS] Proxying WebSocket connection to gateway');
     if (debugLogs) {
       console.log('[WS] URL:', url.pathname + redactedSearch);
     }
@@ -299,8 +325,31 @@ app.all('*', async (c) => {
       wsRequest = new Request(tokenUrl.toString(), request);
     }
 
-    // Get WebSocket connection to the container
-    const containerResponse = await sandbox.wsConnect(wsRequest, MOLTBOT_PORT);
+    // Get WebSocket connection to the container (with retry on crash)
+    let containerResponse: Response;
+    try {
+      containerResponse = await sandbox.wsConnect(wsRequest, GATEWAY_PORT);
+    } catch (err) {
+      if (isGatewayCrashedError(err)) {
+        console.log('[WS] Gateway crashed, attempting restore + restart and retry...');
+        await killGateway(sandbox);
+        try {
+          await restoreIfNeeded(sandbox, c.env.BACKUP_BUCKET);
+        } catch {
+          // non-fatal
+        }
+        await ensureGateway(sandbox, c.env);
+        try {
+          containerResponse = await sandbox.wsConnect(wsRequest, GATEWAY_PORT);
+        } catch (retryErr) {
+          console.error('[WS] Retry after restart also failed:', retryErr);
+          return new Response('Gateway crashed and recovery failed', { status: 503 });
+        }
+      } else {
+        console.error('[WS] WebSocket proxy error:', err);
+        return new Response('WebSocket proxy error', { status: 502 });
+      }
+    }
     console.log('[WS] wsConnect response status:', containerResponse.status);
 
     // Get the container-side WebSocket
@@ -429,12 +478,66 @@ app.all('*', async (c) => {
   }
 
   console.log('[HTTP] Proxying:', url.pathname + url.search);
-  const httpResponse = await sandbox.containerFetch(request, MOLTBOT_PORT);
+
+  let httpResponse: Response;
+  try {
+    httpResponse = await sandbox.containerFetch(request, GATEWAY_PORT);
+  } catch (err) {
+    if (isGatewayCrashedError(err)) {
+      console.log('[HTTP] Gateway crashed, attempting restore + restart and retry...');
+      await killGateway(sandbox);
+      try {
+        await restoreIfNeeded(sandbox, c.env.BACKUP_BUCKET);
+      } catch {
+        // non-fatal
+      }
+      await ensureGateway(sandbox, c.env);
+      try {
+        httpResponse = await sandbox.containerFetch(request, GATEWAY_PORT);
+      } catch (retryErr) {
+        console.error('[HTTP] Retry after restart also failed:', retryErr);
+        if (acceptsHtml) return c.html(loadingPageHtml);
+        return c.json({ error: 'Gateway crashed and recovery failed' }, 503);
+      }
+    } else if (acceptsHtml) {
+      // Gateway not ready for HTML request — show loading page
+      console.log('[HTTP] Gateway not ready, serving loading page');
+      return c.html(loadingPageHtml);
+    } else {
+      console.error('[HTTP] Proxy error:', err);
+      return c.json(
+        { error: 'Proxy error', message: err instanceof Error ? err.message : String(err) },
+        502,
+      );
+    }
+  }
   console.log('[HTTP] Response status:', httpResponse.status);
 
-  // Add debug header to verify worker handled the request
+  // For HTML requests, verify we got actual content from the gateway.
+  // containerFetch can return a 200 with empty/streaming body if the gateway's
+  // HTTP handler hasn't fully initialized. Show the loading page instead
+  // of a blank page that the user would be stuck on forever.
+  if (acceptsHtml) {
+    const body = await httpResponse.text();
+    if (!body || body.length < 50) {
+      console.log(
+        `[HTTP] Empty/short response (${body.length} bytes) for HTML request, serving loading page`,
+      );
+      return c.html(loadingPageHtml);
+    }
+    const newHeaders = new Headers(httpResponse.headers);
+    newHeaders.set('X-Worker-Debug', 'proxy-to-gateway');
+    newHeaders.set('X-Debug-Path', url.pathname);
+    return new Response(body, {
+      status: httpResponse.status,
+      statusText: httpResponse.statusText,
+      headers: newHeaders,
+    });
+  }
+
+  // Non-HTML: pass through as-is
   const newHeaders = new Headers(httpResponse.headers);
-  newHeaders.set('X-Worker-Debug', 'proxy-to-moltbot');
+  newHeaders.set('X-Worker-Debug', 'proxy-to-gateway');
   newHeaders.set('X-Debug-Path', url.pathname);
 
   return new Response(httpResponse.body, {
@@ -446,4 +549,7 @@ app.all('*', async (c) => {
 
 export default {
   fetch: app.fetch,
+  async scheduled(_controller: ScheduledController, env: OpenClawEnv, ctx: ExecutionContext) {
+    ctx.waitUntil(handleScheduled(env));
+  },
 };

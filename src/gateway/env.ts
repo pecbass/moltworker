@@ -1,4 +1,4 @@
-import type { MoltbotEnv } from '../types';
+import type { OpenClawEnv } from '../types';
 
 /**
  * Build environment variables to pass to the OpenClaw container process
@@ -6,7 +6,7 @@ import type { MoltbotEnv } from '../types';
  * @param env - Worker environment bindings
  * @returns Environment variables record
  */
-export function buildEnvVars(env: MoltbotEnv): Record<string, string> {
+export function buildEnvVars(env: OpenClawEnv): Record<string, string> {
   const envVars: Record<string, string> = {};
 
   // Cloudflare AI Gateway configuration (new native provider)
@@ -27,7 +27,10 @@ export function buildEnvVars(env: MoltbotEnv): Record<string, string> {
   // Legacy AI Gateway support: AI_GATEWAY_BASE_URL + AI_GATEWAY_API_KEY
   // When set, these override direct keys for backward compatibility
   if (env.AI_GATEWAY_API_KEY && env.AI_GATEWAY_BASE_URL) {
-    const normalizedBaseUrl = env.AI_GATEWAY_BASE_URL.replace(/\/+$/, '');
+    let normalizedBaseUrl = env.AI_GATEWAY_BASE_URL;
+    while (normalizedBaseUrl.endsWith('/')) {
+      normalizedBaseUrl = normalizedBaseUrl.slice(0, -1);
+    }
     envVars.AI_GATEWAY_BASE_URL = normalizedBaseUrl;
     // Legacy path routes through Anthropic base URL
     envVars.ANTHROPIC_BASE_URL = normalizedBaseUrl;
@@ -47,14 +50,12 @@ export function buildEnvVars(env: MoltbotEnv): Record<string, string> {
   if (env.SLACK_APP_TOKEN) envVars.SLACK_APP_TOKEN = env.SLACK_APP_TOKEN;
   if (env.OPENCLAW_MODEL_OVERRIDE) envVars.OPENCLAW_MODEL_OVERRIDE = env.OPENCLAW_MODEL_OVERRIDE;
   if (env.CF_AI_GATEWAY_MODEL) envVars.CF_AI_GATEWAY_MODEL = env.CF_AI_GATEWAY_MODEL;
-  if (env.CF_ACCOUNT_ID) envVars.CF_ACCOUNT_ID = env.CF_ACCOUNT_ID;
   if (env.CDP_SECRET) envVars.CDP_SECRET = env.CDP_SECRET;
   if (env.WORKER_URL) envVars.WORKER_URL = env.WORKER_URL;
 
-  // R2 persistence credentials (used by rclone in start-openclaw.sh)
-  if (env.R2_ACCESS_KEY_ID) envVars.R2_ACCESS_KEY_ID = env.R2_ACCESS_KEY_ID;
-  if (env.R2_SECRET_ACCESS_KEY) envVars.R2_SECRET_ACCESS_KEY = env.R2_SECRET_ACCESS_KEY;
-  if (env.R2_BUCKET_NAME) envVars.R2_BUCKET_NAME = env.R2_BUCKET_NAME;
+  // Note: R2 credentials are no longer passed to the container.
+  // Persistence is handled by the Sandbox SDK's backup/restore API,
+  // which uses presigned URLs from the Worker side.
 
   return envVars;
 }

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
-import { findExistingMoltbotProcess } from './process';
+import { findExistingGatewayProcess, isGatewayPortOpen } from './process';
 import type { Sandbox, Process } from '@cloudflare/sandbox';
-import { createMockSandbox } from '../test-utils';
+import { createMockSandbox, createMockExecResult } from '../test-utils';
 
 function createFullMockProcess(overrides: Partial<Process> = {}): Process {
   return {
@@ -18,10 +18,10 @@ function createFullMockProcess(overrides: Partial<Process> = {}): Process {
   } as Process;
 }
 
-describe('findExistingMoltbotProcess', () => {
+describe('findExistingGatewayProcess', () => {
   it('returns null when no processes exist', async () => {
     const { sandbox } = createMockSandbox({ processes: [] });
-    const result = await findExistingMoltbotProcess(sandbox);
+    const result = await findExistingGatewayProcess(sandbox);
     expect(result).toBeNull();
   });
 
@@ -33,7 +33,7 @@ describe('findExistingMoltbotProcess', () => {
     const { sandbox, listProcessesMock } = createMockSandbox();
     listProcessesMock.mockResolvedValue(processes);
 
-    const result = await findExistingMoltbotProcess(sandbox);
+    const result = await findExistingGatewayProcess(sandbox);
     expect(result).toBeNull();
   });
 
@@ -50,7 +50,7 @@ describe('findExistingMoltbotProcess', () => {
     const { sandbox, listProcessesMock } = createMockSandbox();
     listProcessesMock.mockResolvedValue(processes);
 
-    const result = await findExistingMoltbotProcess(sandbox);
+    const result = await findExistingGatewayProcess(sandbox);
     expect(result).toBe(gatewayProcess);
   });
 
@@ -63,7 +63,20 @@ describe('findExistingMoltbotProcess', () => {
     const { sandbox, listProcessesMock } = createMockSandbox();
     listProcessesMock.mockResolvedValue([gatewayProcess]);
 
-    const result = await findExistingMoltbotProcess(sandbox);
+    const result = await findExistingGatewayProcess(sandbox);
+    expect(result).toBe(gatewayProcess);
+  });
+
+  it('matches bash-invoked startup script with full path', async () => {
+    const gatewayProcess = createFullMockProcess({
+      id: 'gateway-1',
+      command: 'bash /usr/local/bin/start-openclaw.sh',
+      status: 'running',
+    });
+    const { sandbox, listProcessesMock } = createMockSandbox();
+    listProcessesMock.mockResolvedValue([gatewayProcess]);
+
+    const result = await findExistingGatewayProcess(sandbox);
     expect(result).toBe(gatewayProcess);
   });
 
@@ -76,7 +89,7 @@ describe('findExistingMoltbotProcess', () => {
     const { sandbox, listProcessesMock } = createMockSandbox();
     listProcessesMock.mockResolvedValue([gatewayProcess]);
 
-    const result = await findExistingMoltbotProcess(sandbox);
+    const result = await findExistingGatewayProcess(sandbox);
     expect(result).toBe(gatewayProcess);
   });
 
@@ -89,7 +102,7 @@ describe('findExistingMoltbotProcess', () => {
     const { sandbox, listProcessesMock } = createMockSandbox();
     listProcessesMock.mockResolvedValue([gatewayProcess]);
 
-    const result = await findExistingMoltbotProcess(sandbox);
+    const result = await findExistingGatewayProcess(sandbox);
     expect(result).toBe(gatewayProcess);
   });
 
@@ -101,7 +114,7 @@ describe('findExistingMoltbotProcess', () => {
     const { sandbox, listProcessesMock } = createMockSandbox();
     listProcessesMock.mockResolvedValue(processes);
 
-    const result = await findExistingMoltbotProcess(sandbox);
+    const result = await findExistingGatewayProcess(sandbox);
     expect(result).toBeNull();
   });
 
@@ -110,7 +123,7 @@ describe('findExistingMoltbotProcess', () => {
       listProcesses: vi.fn().mockRejectedValue(new Error('Network error')),
     } as unknown as Sandbox;
 
-    const result = await findExistingMoltbotProcess(sandbox);
+    const result = await findExistingGatewayProcess(sandbox);
     expect(result).toBeNull();
   });
 
@@ -128,7 +141,7 @@ describe('findExistingMoltbotProcess', () => {
     const { sandbox, listProcessesMock } = createMockSandbox();
     listProcessesMock.mockResolvedValue([firstGateway, secondGateway]);
 
-    const result = await findExistingMoltbotProcess(sandbox);
+    const result = await findExistingGatewayProcess(sandbox);
     expect(result?.id).toBe('gateway-1');
   });
 
@@ -139,7 +152,33 @@ describe('findExistingMoltbotProcess', () => {
     const { sandbox, listProcessesMock } = createMockSandbox();
     listProcessesMock.mockResolvedValue(processes);
 
-    const result = await findExistingMoltbotProcess(sandbox);
+    const result = await findExistingGatewayProcess(sandbox);
     expect(result).toBeNull();
+  });
+});
+
+describe('isGatewayPortOpen', () => {
+  it('returns true when port is open (nc exits 0)', async () => {
+    const { sandbox, execMock } = createMockSandbox();
+    execMock.mockResolvedValue(createMockExecResult('', { exitCode: 0 }));
+
+    const result = await isGatewayPortOpen(sandbox);
+    expect(result).toBe(true);
+    expect(execMock).toHaveBeenCalledWith('nc -z localhost 18789');
+  });
+
+  it('returns false when port is closed (nc exits non-zero)', async () => {
+    const { sandbox, execMock } = createMockSandbox();
+    execMock.mockResolvedValue(createMockExecResult('', { exitCode: 1 }));
+
+    const result = await isGatewayPortOpen(sandbox);
+    expect(result).toBe(false);
+  });
+
+  it('propagates errors from sandbox.exec', async () => {
+    const { sandbox, execMock } = createMockSandbox();
+    execMock.mockRejectedValue(new Error('container not ready'));
+
+    await expect(isGatewayPortOpen(sandbox)).rejects.toThrow('container not ready');
   });
 });

@@ -167,15 +167,38 @@
           consecutiveErrors = 0;
 
           if (data.ok && data.status === 'running') {
-            // Container is ready! Reload the page
-            titleEl.innerHTML = '<span class="ready">Moltworker is ready!</span>';
-            statusEl.textContent = 'Redirecting...';
-            document.querySelector('.spinner').style.display = 'none';
-
-            // Small delay so user sees the "ready" message
-            setTimeout(() => {
-              window.location.reload();
-            }, 500);
+            // Gateway reports ready — verify the proxy actually serves content
+            // before reloading. containerFetch can hang if the gateway port is
+            // open but the HTTP handler isn't fully initialized yet.
+            statusEl.textContent = 'Gateway ready, verifying...';
+            try {
+              const probeCtrl = new AbortController();
+              const probeTimer = setTimeout(() => probeCtrl.abort(), 10000);
+              const probeResp = await fetch(window.location.href, {
+                signal: probeCtrl.signal,
+                headers: { Accept: 'text/html' },
+              });
+              clearTimeout(probeTimer);
+              const probeText = await probeResp.text();
+              if (
+                probeResp.ok &&
+                probeText.length > 100 &&
+                !probeText.includes('Starting container')
+              ) {
+                // Proxy is serving real content — safe to reload
+                titleEl.innerHTML = '<span class="ready">Ready!</span>';
+                statusEl.textContent = 'Redirecting...';
+                document.querySelector('.spinner').style.display = 'none';
+                setTimeout(() => {
+                  window.location.reload();
+                }, 300);
+                return;
+              }
+            } catch {
+              // Probe failed — gateway not truly ready, keep polling
+            }
+            statusEl.textContent = 'Gateway starting up...';
+            setTimeout(checkStatus, 3000);
             return;
           }
 

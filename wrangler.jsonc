@@ -63,18 +63,19 @@
       "tag": "v1",
     },
   ],
-  // R2 bucket for persistent storage (moltbot data, conversations, etc.)
+  // R2 bucket for Sandbox SDK backup/restore (squashfs snapshots).
+  // The binding name BACKUP_BUCKET is required by @cloudflare/sandbox.
   "r2_buckets": [
     {
-      "binding": "MOLTBOT_BUCKET",
+      "binding": "BACKUP_BUCKET",
       "bucket_name": "moltbot-data",
     },
   ],
-  // Cron trigger for R2 backup (hourly)
+  // Cron trigger for R2 backup and container wake for OpenClaw cron jobs.
   "triggers": {
     "crons": [
-      "0 * * * *"
-    ],
+      "* * * * *"
+    ]
   },
   // Browser Rendering binding for CDP shim
   "browser": {
@@ -112,8 +113,10 @@
   // - CDP_SECRET: Shared secret for /cdp endpoint authentication
   // - WORKER_URL: Public URL of the worker
   //
-  // R2 persistent storage (optional, for data persistence across sessions):
+  // R2 persistent storage (for data persistence across container restarts):
   // - R2_ACCESS_KEY_ID: R2 access key ID (from R2 API tokens)
   // - R2_SECRET_ACCESS_KEY: R2 secret access key (from R2 API tokens)
   // - CF_ACCOUNT_ID: Your Cloudflare account ID (for R2 endpoint URL)
+  // - CLOUDFLARE_ACCOUNT_ID: Your Cloudflare account ID
+  // - BACKUP_BUCKET_NAME: R2 bucket name (default: moltbot-data)
 }

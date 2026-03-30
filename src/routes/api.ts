@@ -1,12 +1,8 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../types';
 import { createAccessMiddleware } from '../auth';
-import {
-  ensureMoltbotGateway,
-  findExistingMoltbotProcess,
-  syncToR2,
-  waitForProcess,
-} from '../gateway';
+import { ensureGateway, findExistingGatewayProcess, killGateway, waitForProcess } from '../gateway';
+import { createSnapshot, getLastBackupId, signalRestoreNeeded } from '../persistence';
 
 // CLI commands can take 10-15 seconds to complete due to WebSocket connection overhead
 const CLI_TIMEOUT_MS = 20000;
@@ -32,8 +28,8 @@ adminApi.get('/devices', async (c) => {
   const sandbox = c.get('sandbox');
 
   try {
-    // Ensure moltbot is running first
-    await ensureMoltbotGateway(sandbox, c.env);
+    // Ensure gateway is running first
+    await ensureGateway(sandbox, c.env);
 
     // Run OpenClaw CLI to list devices
     // Must specify --url and --token (OpenClaw v2026.2.3 requires explicit credentials with --url)
@@ -89,8 +85,8 @@ adminApi.post('/devices/:requestId/approve', async (c) => {
   }
 
   try {
-    // Ensure moltbot is running first
-    await ensureMoltbotGateway(sandbox, c.env);
+    // Ensure gateway is running first
+    await ensureGateway(sandbox, c.env);
 
     // Run OpenClaw CLI to approve the device
     const token = c.env.MOLTBOT_GATEWAY_TOKEN;
@@ -125,8 +121,8 @@ adminApi.post('/devices/approve-all', async (c) => {
   const sandbox = c.get('sandbox');
 
   try {
-    // Ensure moltbot is running first
-    await ensureMoltbotGateway(sandbox, c.env);
+    // Ensure gateway is running first
+    await ensureGateway(sandbox, c.env);
 
     // First, get the list of pending devices
     const token = c.env.MOLTBOT_GATEWAY_TOKEN;
@@ -194,63 +190,62 @@ adminApi.post('/devices/approve-all', async (c) => {
   }
 });
 
-// GET /api/admin/storage - Get R2 storage status and last sync time
+// GET /api/admin/storage - Get backup/restore status
 adminApi.get('/storage', async (c) => {
-  const sandbox = c.get('sandbox');
   const hasCredentials = !!(
     c.env.R2_ACCESS_KEY_ID &&
     c.env.R2_SECRET_ACCESS_KEY &&
-    c.env.CF_ACCOUNT_ID
+    c.env.CLOUDFLARE_ACCOUNT_ID
   );
 
   const missing: string[] = [];
   if (!c.env.R2_ACCESS_KEY_ID) missing.push('R2_ACCESS_KEY_ID');
   if (!c.env.R2_SECRET_ACCESS_KEY) missing.push('R2_SECRET_ACCESS_KEY');
-  if (!c.env.CF_ACCOUNT_ID) missing.push('CF_ACCOUNT_ID');
+  if (!c.env.CLOUDFLARE_ACCOUNT_ID) missing.push('CLOUDFLARE_ACCOUNT_ID');
 
-  let lastSync: string | null = null;
-
-  if (hasCredentials) {
-    try {
-      const result = await sandbox.exec('cat /tmp/.last-sync 2>/dev/null || echo ""');
-      const timestamp = result.stdout?.trim();
-      if (timestamp && timestamp !== '') {
-        lastSync = timestamp;
-      }
-    } catch {
-      // Ignore errors checking sync status
-    }
-  }
+  const lastBackupId = hasCredentials ? await getLastBackupId(c.env.BACKUP_BUCKET) : null;
 
   return c.json({
     configured: hasCredentials,
     missing: missing.length > 0 ? missing : undefined,
-    lastSync,
+    lastBackupId,
     message: hasCredentials
-      ? 'R2 storage is configured. Your data will persist across container restarts.'
+      ? 'R2 storage is configured. Your data will persist across container restarts via SDK snapshots.'
       : 'R2 storage is not configured. Paired devices and conversations will be lost when the container restarts.',
   });
 });
 
-// POST /api/admin/storage/sync - Trigger a manual sync to R2
+// POST /api/admin/storage/sync - Create a new snapshot
 adminApi.post('/storage/sync', async (c) => {
   const sandbox = c.get('sandbox');
 
-  const result = await syncToR2(sandbox, c.env);
-
-  if (result.success) {
+  try {
+    // Log mount state before backup for diagnostics
+    let mountState = 'unknown';
+    let dirContents = 'unknown';
+    try {
+      const mnt = await sandbox.exec('mount | grep openclaw || echo "NO_OVERLAY"');
+      mountState = mnt.stdout?.trim() ?? 'empty';
+      const ls = await sandbox.exec('ls /home/openclaw/clawd/ 2>&1 || echo "(empty)"');
+      dirContents = ls.stdout?.trim() ?? 'empty';
+    } catch {
+      // non-fatal
+    }
+    const handle = await createSnapshot(sandbox, c.env.BACKUP_BUCKET);
     return c.json({
       success: true,
-      message: 'Sync completed successfully',
-      lastSync: result.lastSync,
+      message: 'Snapshot created successfully',
+      backupId: handle.id,
+      debug: { mountState, dirContents },
     });
-  } else {
-    const status = result.error?.includes('not configured') ? 400 : 500;
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const status =
+      errorMessage.includes('not configured') || errorMessage.includes('Missing') ? 400 : 500;
     return c.json(
       {
         success: false,
-        error: result.error,
-        details: result.details,
+        error: errorMessage,
       },
       status,
     );
@@ -262,31 +257,22 @@ adminApi.post('/gateway/restart', async (c) => {
   const sandbox = c.get('sandbox');
 
   try {
-    // Find and kill the existing gateway process
-    const existingProcess = await findExistingMoltbotProcess(sandbox);
+    // Kill the gateway process (shared logic with crash retry)
+    const existingProcess = await findExistingGatewayProcess(sandbox);
+    console.log('[Restart] Killing gateway, existing process:', existingProcess?.id ?? 'none');
+    await killGateway(sandbox);
 
-    if (existingProcess) {
-      console.log('Killing existing gateway process:', existingProcess.id);
-      try {
-        await existingProcess.kill();
-      } catch (killErr) {
-        console.error('Error killing process:', killErr);
-      }
-      // Wait a moment for the process to die
-      await new Promise((r) => setTimeout(r, 2000));
-    }
-
-    // Start a new gateway in the background
-    const bootPromise = ensureMoltbotGateway(sandbox, c.env).catch((err) => {
-      console.error('Gateway restart failed:', err);
-    });
-    c.executionCtx.waitUntil(bootPromise);
+    // Signal that all Worker isolates need to re-restore from R2.
+    // This writes a marker to R2 that restoreIfNeeded checks, ensuring
+    // the FUSE overlay is mounted even if a different isolate handles
+    // the next request (e.g. browser WebSocket reconnect).
+    await signalRestoreNeeded(c.env.BACKUP_BUCKET);
 
     return c.json({
       success: true,
       message: existingProcess
-        ? 'Gateway process killed, new instance starting...'
-        : 'No existing process found, starting new instance...',
+        ? 'Gateway process killed, will restart on next request'
+        : 'No existing process found, will start on next request',
       previousProcessId: existingProcess?.id,
     });
   } catch (error) {

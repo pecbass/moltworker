@@ -1,11 +1,14 @@
 #!/bin/bash
 # Startup script for OpenClaw in Cloudflare Sandbox
 # This script:
-# 1. Restores config/workspace/skills from R2 via rclone (if configured)
-# 2. Runs openclaw onboard --non-interactive to configure from env vars
-# 3. Patches config for features onboard doesn't cover (channels, gateway auth)
-# 4. Starts a background sync loop (rclone, watches for file changes)
-# 5. Starts the gateway
+# 1. Runs openclaw onboard --non-interactive to configure from env vars
+# 2. Patches config for features onboard doesn't cover (channels, gateway auth)
+# 3. Starts the gateway
+#
+# NOTE: Persistence (backup/restore) is handled by the Sandbox SDK at the
+# Worker level, not inside the container. The Worker calls createBackup()
+# and restoreBackup() which use squashfs snapshots stored in R2.
+# No rclone or R2 credentials are needed inside the container.
 
 set -e
 
@@ -18,85 +21,10 @@ CONFIG_DIR="/root/.openclaw"
 CONFIG_FILE="$CONFIG_DIR/openclaw.json"
 WORKSPACE_DIR="/root/clawd"
 SKILLS_DIR="/root/clawd/skills"
-RCLONE_CONF="/root/.config/rclone/rclone.conf"
-LAST_SYNC_FILE="/tmp/.last-sync"
 
 echo "Config directory: $CONFIG_DIR"
 
 mkdir -p "$CONFIG_DIR"
-
-# ============================================================
-# RCLONE SETUP
-# ============================================================
-
-r2_configured() {
-    [ -n "$R2_ACCESS_KEY_ID" ] && [ -n "$R2_SECRET_ACCESS_KEY" ] && [ -n "$CF_ACCOUNT_ID" ]
-}
-
-R2_BUCKET="${R2_BUCKET_NAME:-moltbot-data}"
-
-setup_rclone() {
-    mkdir -p "$(dirname "$RCLONE_CONF")"
-    cat > "$RCLONE_CONF" << EOF
-[r2]
-type = s3
-provider = Cloudflare
-access_key_id = $R2_ACCESS_KEY_ID
-secret_access_key = $R2_SECRET_ACCESS_KEY
-endpoint = https://${CF_ACCOUNT_ID}.r2.cloudflarestorage.com
-acl = private
-no_check_bucket = true
-EOF
-    touch /tmp/.rclone-configured
-    echo "Rclone configured for bucket: $R2_BUCKET"
-}
-
-RCLONE_FLAGS="--transfers=16 --fast-list --s3-no-check-bucket"
-
-# ============================================================
-# RESTORE FROM R2
-# ============================================================
-
-if r2_configured; then
-    setup_rclone
-
-    echo "Checking R2 for existing backup..."
-    # Check if R2 has an openclaw config backup
-    if rclone ls "r2:${R2_BUCKET}/openclaw/openclaw.json" $RCLONE_FLAGS 2>/dev/null | grep -q openclaw.json; then
-        echo "Restoring config from R2..."
-        rclone copy "r2:${R2_BUCKET}/openclaw/" "$CONFIG_DIR/" $RCLONE_FLAGS -v 2>&1 || echo "WARNING: config restore failed with exit code $?"
-        echo "Config restored"
-    elif rclone ls "r2:${R2_BUCKET}/clawdbot/clawdbot.json" $RCLONE_FLAGS 2>/dev/null | grep -q clawdbot.json; then
-        echo "Restoring from legacy R2 backup..."
-        rclone copy "r2:${R2_BUCKET}/clawdbot/" "$CONFIG_DIR/" $RCLONE_FLAGS -v 2>&1 || echo "WARNING: legacy config restore failed with exit code $?"
-        if [ -f "$CONFIG_DIR/clawdbot.json" ] && [ ! -f "$CONFIG_FILE" ]; then
-            mv "$CONFIG_DIR/clawdbot.json" "$CONFIG_FILE"
-        fi
-        echo "Legacy config restored and migrated"
-    else
-        echo "No backup found in R2, starting fresh"
-    fi
-
-    # Restore workspace
-    REMOTE_WS_COUNT=$(rclone ls "r2:${R2_BUCKET}/workspace/" $RCLONE_FLAGS 2>/dev/null | wc -l)
-    if [ "$REMOTE_WS_COUNT" -gt 0 ]; then
-        echo "Restoring workspace from R2 ($REMOTE_WS_COUNT files)..."
-        mkdir -p "$WORKSPACE_DIR"
-        rclone copy "r2:${R2_BUCKET}/workspace/" "$WORKSPACE_DIR/" $RCLONE_FLAGS -v 2>&1 || echo "WARNING: workspace restore failed with exit code $?"
-        echo "Workspace restored"
-    fi
-
-    # Restore skills
-    REMOTE_SK_COUNT=$(rclone ls "r2:${R2_BUCKET}/skills/" $RCLONE_FLAGS 2>/dev/null | wc -l)
-    if [ "$REMOTE_SK_COUNT" -gt 0 ]; then
-        echo "Restoring skills from R2 ($REMOTE_SK_COUNT files)..."
-        mkdir -p "$SKILLS_DIR"
-        rclone copy "r2:${R2_BUCKET}/skills/" "$SKILLS_DIR/" $RCLONE_FLAGS -v 2>&1 || echo "WARNING: skills restore failed with exit code $?"
-        echo "Skills restored"
-    fi
-else
-    echo "R2 not configured, starting fresh"
-fi
 
 # ============================================================
 # ONBOARD (only if no config exists yet)
@@ -104,16 +32,17 @@ fi
 if [ ! -f "$CONFIG_FILE" ]; then
     echo "No existing config found, running openclaw onboard..."
 
+    # Determine auth choice — openclaw onboard reads the actual key values
+    # from environment variables (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.)
+    # so we only pass --auth-choice, never the key itself, to avoid
+    # exposing secrets in process arguments visible via ps/proc.
     AUTH_ARGS=""
     if [ -n "$CLOUDFLARE_AI_GATEWAY_API_KEY" ] && [ -n "$CF_AI_GATEWAY_ACCOUNT_ID" ] && [ -n "$CF_AI_GATEWAY_GATEWAY_ID" ]; then
-        AUTH_ARGS="--auth-choice cloudflare-ai-gateway-api-key \
-            --cloudflare-ai-gateway-account-id $CF_AI_GATEWAY_ACCOUNT_ID \
-            --cloudflare-ai-gateway-gateway-id $CF_AI_GATEWAY_GATEWAY_ID \
-            --cloudflare-ai-gateway-api-key $CLOUDFLARE_AI_GATEWAY_API_KEY"
+        AUTH_ARGS="--auth-choice cloudflare-ai-gateway-api-key --cloudflare-ai-gateway-account-id $CF_AI_GATEWAY_ACCOUNT_ID --cloudflare-ai-gateway-gateway-id $CF_AI_GATEWAY_GATEWAY_ID"
     elif [ -n "$ANTHROPIC_API_KEY" ]; then
-        AUTH_ARGS="--auth-choice apiKey --anthropic-api-key $ANTHROPIC_API_KEY"
+        AUTH_ARGS="--auth-choice apiKey"
     elif [ -n "$OPENAI_API_KEY" ]; then
-        AUTH_ARGS="--auth-choice openai-api-key --openai-api-key $OPENAI_API_KEY"
+        AUTH_ARGS="--auth-choice openai-api-key"
     fi
 
     openclaw onboard --non-interactive --accept-risk \
@@ -159,10 +88,22 @@ config.gateway.port = 18789;
 config.gateway.mode = 'local';
 config.gateway.trustedProxies = ['10.1.0.0'];
 
+config.gateway.controlUi = config.gateway.controlUi || {};
+config.gateway.controlUi.allowedOrigins = ['*'];
+
 if (process.env.OPENCLAW_GATEWAY_TOKEN) {
     config.gateway.auth = config.gateway.auth || {};
     config.gateway.auth.token = process.env.OPENCLAW_GATEWAY_TOKEN;
 }
+
+// Allow any origin to connect to the gateway control UI.
+// The gateway runs inside a Cloudflare Container behind the Worker, which
+// proxies requests from the public workers.dev domain. Without this,
+// openclaw >= 2026.2.26 rejects WebSocket connections because the browser's
+// origin (https://....workers.dev) doesn't match the gateway's localhost.
+// Security is handled by CF Access + gateway token auth, not origin checks.
+config.gateway.controlUi = config.gateway.controlUi || {};
+config.gateway.controlUi.allowedOrigins = ['*'];
 
 if (process.env.OPENCLAW_DEV_MODE === 'true') {
     config.gateway.controlUi = config.gateway.controlUi || {};
@@ -286,51 +227,6 @@ console.log('Configuration patched successfully');
 EOFPATCH
 
 # ============================================================
-# BACKGROUND SYNC LOOP
-# ============================================================
-if r2_configured; then
-    echo "Starting background R2 sync loop..."
-    (
-        MARKER=/tmp/.last-sync-marker
-        LOGFILE=/tmp/r2-sync.log
-        touch "$MARKER"
-
-        while true; do
-            sleep 30
-
-            CHANGED=/tmp/.changed-files
-            {
-                find "$CONFIG_DIR" -newer "$MARKER" -type f -printf '%P\n' 2>/dev/null
-                find "$WORKSPACE_DIR" -newer "$MARKER" \
-                    -not -path '*/node_modules/*' \
-                    -not -path '*/.git/*' \
-                    -type f -printf '%P\n' 2>/dev/null
-            } > "$CHANGED"
-
-            COUNT=$(wc -l < "$CHANGED" 2>/dev/null || echo 0)
-
-            if [ "$COUNT" -gt 0 ]; then
-                echo "[sync] Uploading changes ($COUNT files) at $(date)" >> "$LOGFILE"
-                rclone sync "$CONFIG_DIR/" "r2:${R2_BUCKET}/openclaw/" \
-                    $RCLONE_FLAGS --exclude='*.lock' --exclude='*.log' --exclude='*.tmp' --exclude='.git/**' 2>> "$LOGFILE"
-                if [ -d "$WORKSPACE_DIR" ]; then
-                    rclone sync "$WORKSPACE_DIR/" "r2:${R2_BUCKET}/workspace/" \
-                        $RCLONE_FLAGS --exclude='skills/**' --exclude='.git/**' --exclude='node_modules/**' 2>> "$LOGFILE"
-                fi
-                if [ -d "$SKILLS_DIR" ]; then
-                    rclone sync "$SKILLS_DIR/" "r2:${R2_BUCKET}/skills/" \
-                        $RCLONE_FLAGS 2>> "$LOGFILE"
-                fi
-                date -Iseconds > "$LAST_SYNC_FILE"
-                touch "$MARKER"
-                echo "[sync] Complete at $(date)" >> "$LOGFILE"
-            fi
-        done
-    ) &
-    echo "Background sync loop started (PID: $!)"
-fi
-
-# ============================================================
 # START GATEWAY
 # ============================================================
 echo "Starting OpenClaw Gateway..."
@@ -341,10 +237,13 @@ rm -f "$CONFIG_DIR/gateway.lock" 2>/dev/null || true
 
 echo "Dev mode: ${OPENCLAW_DEV_MODE:-false}"
 
+# Gateway token (if set) is already written to openclaw.json by the config
+# patch above (gateway.auth.token). We deliberately avoid passing --token on
+# the command line because CLI arguments are visible to all processes in the
+# container via ps/proc.
 if [ -n "$OPENCLAW_GATEWAY_TOKEN" ]; then
     echo "Starting gateway with token auth..."
-    exec openclaw gateway --port 18789 --verbose --allow-unconfigured --bind lan --token "$OPENCLAW_GATEWAY_TOKEN"
 else
     echo "Starting gateway with device pairing (no token)..."
-    exec openclaw gateway --port 18789 --verbose --allow-unconfigured --bind lan
 fi
+exec openclaw gateway --port 18789 --verbose --allow-unconfigured --bind lan

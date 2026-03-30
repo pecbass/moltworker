@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../types';
-import { findExistingMoltbotProcess, waitForProcess } from '../gateway';
+import { findExistingGatewayProcess, killGateway, waitForProcess } from '../gateway';
+import { handleScheduled } from '../cron/handler';
 
 /**
  * Debug routes for inspecting container state
@@ -17,7 +18,7 @@ debug.get('/version', async (c) => {
     const versionProcess = await sandbox.startProcess('openclaw --version');
     await new Promise((resolve) => setTimeout(resolve, 500));
     const versionLogs = await versionProcess.getLogs();
-    const moltbotVersion = (versionLogs.stdout || versionLogs.stderr || '').trim();
+    const openclawVersion = (versionLogs.stdout || versionLogs.stderr || '').trim();
 
     // Get node version
     const nodeProcess = await sandbox.startProcess('node --version');
@@ -26,7 +27,7 @@ debug.get('/version', async (c) => {
     const nodeVersion = (nodeLogs.stdout || '').trim();
 
     return c.json({
-      moltbot_version: moltbotVersion,
+      openclaw_version: openclawVersion,
       node_version: nodeVersion,
     });
   } catch (error) {
@@ -95,15 +96,15 @@ debug.get('/processes', async (c) => {
   }
 });
 
-// GET /debug/gateway-api - Probe the moltbot gateway HTTP API
+// GET /debug/gateway-api - Probe the OpenClaw gateway HTTP API
 debug.get('/gateway-api', async (c) => {
   const sandbox = c.get('sandbox');
   const path = c.req.query('path') || '/';
-  const MOLTBOT_PORT = 18789;
+  const GATEWAY_PORT = 18789;
 
   try {
-    const url = `http://localhost:${MOLTBOT_PORT}${path}`;
-    const response = await sandbox.containerFetch(new Request(url), MOLTBOT_PORT);
+    const url = `http://localhost:${GATEWAY_PORT}${path}`;
+    const response = await sandbox.containerFetch(new Request(url), GATEWAY_PORT);
     const contentType = response.headers.get('content-type') || '';
 
     let body: string | object;
@@ -171,11 +172,11 @@ debug.get('/logs', async (c) => {
         );
       }
     } else {
-      process = await findExistingMoltbotProcess(sandbox);
+      process = await findExistingGatewayProcess(sandbox);
       if (!process) {
         return c.json({
           status: 'no_process',
-          message: 'No Moltbot process is currently running',
+          message: 'No gateway process is currently running',
           stdout: '',
           stderr: '',
         });
@@ -345,7 +346,7 @@ debug.get('/env', async (c) => {
     has_gateway_token: !!c.env.MOLTBOT_GATEWAY_TOKEN,
     has_r2_access_key: !!c.env.R2_ACCESS_KEY_ID,
     has_r2_secret_key: !!c.env.R2_SECRET_ACCESS_KEY,
-    has_cf_account_id: !!c.env.CF_ACCOUNT_ID,
+    has_cloudflare_account_id: !!c.env.CLOUDFLARE_ACCOUNT_ID,
     dev_mode: c.env.DEV_MODE,
     debug_routes: c.env.DEBUG_ROUTES,
     bind_mode: 'lan',
@@ -354,7 +355,7 @@ debug.get('/env', async (c) => {
   });
 });
 
-// GET /debug/container-config - Read the moltbot config from inside the container
+// GET /debug/container-config - Read the OpenClaw config from inside the container
 debug.get('/container-config', async (c) => {
   const sandbox = c.get('sandbox');
 
@@ -384,6 +385,51 @@ debug.get('/container-config', async (c) => {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     return c.json({ error: errorMessage }, 500);
   }
+});
+
+// POST /debug/stop-gateway - Kill the gateway process without restarting
+debug.post('/stop-gateway', async (c) => {
+  const sandbox = c.get('sandbox');
+  const process = await findExistingGatewayProcess(sandbox);
+  await killGateway(sandbox);
+  return c.json({
+    success: true,
+    message: 'Gateway stopped',
+    previousProcessId: process?.id ?? null,
+  });
+});
+
+// POST /debug/destroy-container - Destroy the sandbox container entirely
+// Simulates the container going to sleep. The next Sandbox API call will
+// start a fresh container. Used by e2e tests to verify cron wake behavior.
+debug.post('/destroy-container', async (c) => {
+  const sandbox = c.get('sandbox');
+  await sandbox.destroy();
+  return c.json({ success: true, message: 'Container destroyed' });
+});
+
+// POST /debug/trigger-cron - Trigger the cron wake handler manually
+// Calls the same function as the Workers Cron Trigger without waiting 60s.
+debug.post('/trigger-cron', async (c) => {
+  try {
+    await handleScheduled(c.env);
+    return c.json({ success: true, message: 'Cron handler executed' });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    return c.json({ success: false, error: msg }, 500);
+  }
+});
+
+// POST /debug/r2-put?key=<key> - Write content to R2 bucket
+// Used by e2e tests to upload fake cron store or other test data.
+debug.post('/r2-put', async (c) => {
+  const key = c.req.query('key');
+  if (!key) {
+    return c.json({ error: 'key query parameter required' }, 400);
+  }
+  const body = await c.req.text();
+  await c.env.BACKUP_BUCKET.put(key, body);
+  return c.json({ success: true, key, size: body.length });
 });
 
 export { debug };
