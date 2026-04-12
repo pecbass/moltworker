@@ -321,11 +321,6 @@ adminApi.get('/setup-codex', async (c) => {
   }
 });
 
-// Mount admin API routes under /admin
-api.route('/admin', adminApi);
-
-export { api };
-
 adminApi.post('/upload-auth', async (c) => {
   const sandbox = c.get('sandbox');
   try {
@@ -341,3 +336,8 @@ adminApi.post('/upload-auth', async (c) => {
     return c.json({ error: errorMessage }, 500);
   }
 });
+
+// Mount admin API routes under /admin
+api.route('/admin', adminApi);
+
+export { api };
