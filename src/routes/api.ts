@@ -291,12 +291,17 @@ adminApi.get('/setup-codex', async (c) => {
     
     // Wait for the process to print the device code (CLI startup takes 10-15s)
     let stdout = '';
+    let stderr = '';
     for (let i = 0; i < 25; i++) {
       await new Promise(resolve => setTimeout(resolve, 1000));
       const logs = await proc.getLogs();
       stdout = logs.stdout || '';
-      if (stdout.includes('https://') && stdout.match(/[A-Z0-9]{4}-[A-Z0-9]{4}/)) {
+      stderr = logs.stderr || '';
+      if (stdout.includes('https://') && !!stdout.match(/[A-Z0-9]{4}-[A-Z0-9]{4}/)) {
         break; // Found the code
+      }
+      if (proc.status === 'completed' || proc.status === 'failed') {
+        break;
       }
     }
 
@@ -304,7 +309,10 @@ adminApi.get('/setup-codex', async (c) => {
       success: true,
       message: 'Auth process started',
       processId: proc.id,
+      status: proc.status,
+      exitCode: proc.exitCode,
       logs: stdout,
+      stderr: stderr
     });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
