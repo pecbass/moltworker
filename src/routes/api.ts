@@ -287,7 +287,8 @@ adminApi.get('/setup-codex', async (c) => {
   const sandbox = c.get('sandbox');
   try {
     // Start the auth process
-    const proc = await sandbox.startProcess('openclaw models auth login --provider openai-codex');
+    // Start the auth process using 'script' to simulate a real TTY
+    const proc = await sandbox.startProcess('script -q -c "openclaw models auth login --provider openai-codex" /dev/null');
     
     // Wait for the process to print the device code (CLI startup takes 10-15s)
     let stdout = '';
