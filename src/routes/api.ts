@@ -325,3 +325,19 @@ adminApi.get('/setup-codex', async (c) => {
 api.route('/admin', adminApi);
 
 export { api };
+
+adminApi.post('/upload-auth', async (c) => {
+  const sandbox = c.get('sandbox');
+  try {
+    const authData = await c.req.text();
+    JSON.parse(authData);
+    const b64 = btoa(authData);
+    await sandbox.exec('mkdir -p /home/openclaw/.openclaw/agents/main/agent');
+    await sandbox.exec(`echo "${b64}" | base64 -d > /home/openclaw/.openclaw/agents/main/agent/auth-profiles.json`);
+    const handle = await createSnapshot(sandbox, c.env.BACKUP_BUCKET);
+    return c.json({ success: true, handle });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    return c.json({ error: errorMessage }, 500);
+  }
+});
