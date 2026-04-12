@@ -195,13 +195,13 @@ adminApi.get('/storage', async (c) => {
   const hasCredentials = !!(
     c.env.R2_ACCESS_KEY_ID &&
     c.env.R2_SECRET_ACCESS_KEY &&
-    c.env.CLOUDFLARE_ACCOUNT_ID
+    (c.env.CLOUDFLARE_ACCOUNT_ID || c.env.CF_ACCOUNT_ID)
   );
 
   const missing: string[] = [];
   if (!c.env.R2_ACCESS_KEY_ID) missing.push('R2_ACCESS_KEY_ID');
   if (!c.env.R2_SECRET_ACCESS_KEY) missing.push('R2_SECRET_ACCESS_KEY');
-  if (!c.env.CLOUDFLARE_ACCOUNT_ID) missing.push('CLOUDFLARE_ACCOUNT_ID');
+  if (!(c.env.CLOUDFLARE_ACCOUNT_ID || c.env.CF_ACCOUNT_ID)) missing.push('CF_ACCOUNT_ID');
 
   const lastBackupId = hasCredentials ? await getLastBackupId(c.env.BACKUP_BUCKET) : null;
 

@@ -37,6 +37,7 @@ export interface OpenClawEnv {
   // R2 credentials for Sandbox SDK backup/restore (set via wrangler secret)
   R2_ACCESS_KEY_ID?: string;
   R2_SECRET_ACCESS_KEY?: string;
+  CF_ACCOUNT_ID?: string; // Cloudflare account ID (used in README)
   CLOUDFLARE_ACCOUNT_ID?: string; // Cloudflare account ID for R2 presigned URLs
   BACKUP_BUCKET_NAME?: string; // R2 bucket name for backup storage
   // Browser Rendering binding for CDP shim
