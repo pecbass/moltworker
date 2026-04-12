@@ -282,6 +282,36 @@ adminApi.post('/gateway/restart', async (c) => {
   }
 });
 
+// GET /api/admin/setup-codex - Start OpenAI Codex auth flow
+adminApi.get('/setup-codex', async (c) => {
+  const sandbox = c.get('sandbox');
+  try {
+    // Start the auth process
+    const proc = await sandbox.startProcess('openclaw models auth login --provider openai-codex');
+    
+    // Wait for the process to print the device code (usually takes 1-3 seconds)
+    let stdout = '';
+    for (let i = 0; i < 10; i++) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      const logs = await proc.getLogs();
+      stdout = logs.stdout || '';
+      if (stdout.includes('https://') && stdout.match(/[A-Z0-9]{4}-[A-Z0-9]{4}/)) {
+        break; // Found the code
+      }
+    }
+
+    return c.json({
+      success: true,
+      message: 'Auth process started',
+      processId: proc.id,
+      logs: stdout,
+    });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    return c.json({ error: errorMessage }, 500);
+  }
+});
+
 // Mount admin API routes under /admin
 api.route('/admin', adminApi);
 
