@@ -289,9 +289,9 @@ adminApi.get('/setup-codex', async (c) => {
     // Start the auth process
     const proc = await sandbox.startProcess('openclaw models auth login --provider openai-codex');
     
-    // Wait for the process to print the device code (usually takes 1-3 seconds)
+    // Wait for the process to print the device code (CLI startup takes 10-15s)
     let stdout = '';
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < 25; i++) {
       await new Promise(resolve => setTimeout(resolve, 1000));
       const logs = await proc.getLogs();
       stdout = logs.stdout || '';
